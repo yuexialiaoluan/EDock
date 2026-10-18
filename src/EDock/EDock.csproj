@@ -21,7 +21,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Assets/EDock.ico</ApplicationIcon>
-    <Version>0.16.8</Version>
+    <Version>0.16.9</Version>
     <Description>EDock · Windows 11 左右自动隐藏快捷启动栏</Description>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

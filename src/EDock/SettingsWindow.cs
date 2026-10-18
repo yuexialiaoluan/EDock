@@ -257,7 +257,7 @@ public sealed class SettingsWindow : Window
         Grid.SetRow(_message, 1); workspace.Children.Add(_message);
         Grid.SetRow(_pageHost, 2); workspace.Children.Add(_pageHost);
 
-        var behavior = AddSection("边栏与自动隐藏", "鼠标靠近屏幕边缘时展开，离开后收回。固定按钮只影响所在的一侧。");
+        var behavior = AddSection("边栏与自动隐藏", "鼠标靠近屏幕边缘时展开，离开后收回。固定按钮只影响所在的一侧。左右均可关闭，之后可从系统托盘打开设置重新开启。");
         _autoHide = Toggle("自动隐藏", settings.AutoHide);
         behavior.Children.Add(_autoHide);
         _hideDelay = Number("移开后多久隐藏（毫秒）", settings.HideDelayMs, 100, 5000, 50);
@@ -403,7 +403,7 @@ public sealed class SettingsWindow : Window
         exit.Click += (_, _) => App.Current.ExitApplication();
         footer.Children.Add(folder); footer.Children.Add(exit);
         _contentControls.Add(folder); _contentControls.Add(exit);
-        var versionSurface = new Border { Child = new TextBlock { Text = "版本 0.16.8", FontSize = 11, Opacity = .55 },
+        var versionSurface = new Border { Child = new TextBlock { Text = "版本 0.16.9", FontSize = 11, Opacity = .55 },
             Padding = new Thickness(6, 3, 6, 3), Margin = new Thickness(6, 6, 0, 0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Left };
         _textSurfaces.Add(versionSurface); footer.Children.Add(versionSurface);
         Grid.SetRow(footer, 1); sidebar.Children.Add(footer);
@@ -909,24 +909,6 @@ public sealed class SettingsWindow : Window
     {
         if (_loadingOptions || _closed) return;
         string side = _quickModeSide.SelectedIndex switch { 1 => "Right", 2 => "Both", _ => "Left" };
-        string? error = !_left.IsOn && !_right.IsOn ? "至少保留一侧边栏，方便继续使用。"
-            : _quickMode.IsOn && (side == "Left" && !_left.IsOn || side == "Right" && !_right.IsOn)
-                ? "请先启用快捷模式所选的边栏，或更改快捷模式显示的边栏。" : null;
-        if (error is not null)
-        {
-            _loadingOptions = true;
-            try
-            {
-                _left.IsOn = _leftEnabled; _right.IsOn = _rightEnabled;
-                _removeDesktopShortcut.IsOn = _removeDesktop; _quickMode.IsOn = _quickEnabled;
-                _quickModeSide.SelectedIndex = _quickSide switch { "Right" => 1, "Both" => 2, _ => 0 };
-                UpdateQuickModeControls();
-            }
-            finally { _loadingOptions = false; }
-            UpdateScopeStatus();
-            ShowError(error);
-            return;
-        }
         _leftEnabled = _left.IsOn; _rightEnabled = _right.IsOn;
         _removeDesktop = _removeDesktopShortcut.IsOn; _quickEnabled = _quickMode.IsOn; _quickSide = side;
         UpdateScopeStatus();

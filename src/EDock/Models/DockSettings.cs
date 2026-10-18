@@ -148,8 +148,6 @@ public sealed class DockSettings : DockOptions
     // Settings are editable JSON. Repair unusable values before the window uses them.
     internal void Normalize()
     {
-        if (!LeftEnabled && !RightEnabled)
-            LeftEnabled = true;
         if (QuickModeSide is not ("Left" or "Right" or "Both")) QuickModeSide = "Left";
         TaskbarOpacity = double.IsFinite(TaskbarOpacity) ? Math.Clamp(TaskbarOpacity, 0, 1) : 0;
         if (TaskbarMaterial is not ("Transparent" or "Acrylic" or "Blur")) TaskbarMaterial = "Transparent";

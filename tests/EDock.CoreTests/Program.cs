@@ -638,7 +638,7 @@ suite.Run("Shortcut import preserves paths with spaces and document extensions",
         Check.Equal(directory, folder.TargetPath);
     });
 });
-suite.Run("Settings repair disabled entry points and clamp width to UI limits", () =>
+suite.Run("Settings preserve both disabled docks and clamp width to UI limits", () =>
 {
     WithTempDirectory(directory =>
     {
@@ -646,7 +646,7 @@ suite.Run("Settings repair disabled entry points and clamp width to UI limits", 
         var settings = new DockSettings { LeftEnabled = false, RightEnabled = false, DockWidth = 20 };
         store.Save(settings);
         var loaded = store.Load();
-        Check.True(loaded.LeftEnabled);
+        Check.False(loaded.LeftEnabled);
         Check.False(loaded.RightEnabled);
         Check.Equal(72, loaded.DockWidth);
         settings.DockWidth = 500;
@@ -655,6 +655,38 @@ suite.Run("Settings repair disabled entry points and clamp width to UI limits", 
         settings.DockWidth = double.NaN;
         store.Save(settings);
         Check.Equal(88, store.Load().DockWidth);
+    });
+});
+suite.Run("Both disabled docks preserve quick mode preferences and shortcuts across reloads", () =>
+{
+    WithTempDirectory(directory =>
+    {
+        var store = new SettingsStore(directory);
+        foreach (string side in new[] { "Left", "Right", "Both" })
+        {
+            var settings = new DockSettings
+            {
+                LeftEnabled = false, RightEnabled = false,
+                QuickModeEnabled = true, QuickModeSide = side
+            };
+            settings.LeftShortcuts.Add(new ShortcutItem { Id = "left-kept", Name = "Left", TargetPath = @"C:\Apps\left.exe" });
+            settings.RightShortcuts.Add(new ShortcutItem { Id = "right-kept", Name = "Right", TargetPath = @"C:\Apps\right.exe" });
+            store.Save(settings);
+            var loaded = new SettingsStore(directory).Load();
+            Check.False(loaded.LeftEnabled);
+            Check.False(loaded.RightEnabled);
+            Check.True(loaded.QuickModeEnabled);
+            Check.Equal(side, loaded.QuickModeSide);
+            Check.Equal("left-kept", loaded.LeftShortcuts.Single().Id);
+            Check.Equal("right-kept", loaded.RightShortcuts.Single().Id);
+            loaded.RightEnabled = true;
+            store.Save(loaded);
+            loaded = new SettingsStore(directory).Load();
+            Check.False(loaded.LeftEnabled);
+            Check.True(loaded.RightEnabled);
+            Check.Equal("left-kept", loaded.LeftShortcuts.Single().Id);
+            Check.Equal("right-kept", loaded.RightShortcuts.Single().Id);
+        }
     });
 });
 suite.Run("Legacy settings preserve shortcuts and gain appearance defaults", () =>

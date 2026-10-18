@@ -46,6 +46,9 @@ public partial class App : Application
     {
         StartupService.ApplyLaunchPriority();
         InitializeComponent();
+        // The tray and optional taskbar effects stay available with no XAML
+        // windows. ExitApplication owns shutdown even after both docks close.
+        DispatcherShutdownMode = Microsoft.UI.Xaml.DispatcherShutdownMode.OnExplicitShutdown;
         UnhandledException += (_, e) =>
         {
             try { Directory.CreateDirectory(SettingsStoreDirectory); File.AppendAllText(Path.Combine(SettingsStoreDirectory, "error.log"), $"{DateTimeOffset.Now:u} {e.Exception}\n"); } catch { }
@@ -239,6 +242,7 @@ public partial class App : Application
         if (!leftCreated && refreshLeft && (changedSide is null or DockSide.Left)) _left?.Refresh();
         if (!rightCreated && refreshRight && (changedSide is null or DockSide.Right)) _right?.Refresh();
         ConfigureQuickMode();
+        RefreshPointerKeyboardTarget();
         NotifyIdleMemoryStateChanged();
     }
 
@@ -246,9 +250,18 @@ public partial class App : Application
 
     private void ConfigureQuickMode()
     {
-        if (_quickMode is not null && (_quickMode.IsEnabled != Settings.QuickModeEnabled || _quickMode.Side != Settings.QuickModeSide))
+        // Keep the user's preference, but only listen for Ctrl when its chosen
+        // dock exists. Reopening that dock restores quick mode automatically.
+        bool available = Settings.QuickModeSide switch
+        {
+            "Right" => _right is not null,
+            "Both" => _left is not null || _right is not null,
+            _ => _left is not null
+        };
+        bool enabled = Settings.QuickModeEnabled && available;
+        if (_quickMode is not null && (_quickMode.IsEnabled != enabled || _quickMode.Side != Settings.QuickModeSide))
             EndOrdinaryKeyboardSession();
-        _quickMode?.Configure(Settings.QuickModeEnabled, Settings.QuickModeSide);
+        _quickMode?.Configure(enabled, Settings.QuickModeSide);
         if (_quickMode?.LastError is { Length: > 0 } error) ReportError(error);
     }
 

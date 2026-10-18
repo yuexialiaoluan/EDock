@@ -4,15 +4,26 @@ Windows 11 左右自动隐藏快捷启动栏。鼠标移到屏幕边缘展开，
 
 ## 下载与运行
 
-在 [Releases](https://github.com/yuexialiaoluan/EDock/releases) 下载
-**EDock-0.16.8-win-x64.zip**，完整解压后双击 **EDock.exe**。
+在 [0.16.9 发布页](https://github.com/yuexialiaoluan/EDock/releases/tag/v0.16.9) 下载，
+完整解压后双击 **EDock.exe**。适用 Windows 11 x64，免安装。
 
-适用 Windows 11 x64，免安装，不需要管理员权限，已包含 .NET 和 Windows App SDK
-运行依赖。请保留全部附属文件，不要直接在压缩包里运行。
+| 版本 | 压缩包 | 大小 | 运行环境 |
+| --- | --- | --- | --- |
+| 完整版 | `EDock-0.16.9-win-x64.zip` | 98.67 MiB | 已包含运行依赖，适合首次使用 |
+| 精简版 | `EDock-0.16.9-lite-win-x64.zip` | 15.47 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
+
+两版功能相同。精简版所需环境可从微软下载：
+[.NET 8 x64 Runtime](https://aka.ms/dotnet/8.0/dotnet-runtime-win-x64.exe)、
+[Windows App Runtime 1.8 x64](https://aka.ms/windowsappsdk/1.8/latest/windowsappruntimeinstall-x64.exe)。
+Windows 不一定自带这些环境；已安装其他主版本也不能直接替代。
+
+升级前先从托盘退出旧版；请保留全部附属文件，不要直接在压缩包里运行。
+发布页附两版各自的 `SHA256.txt` 校验文件。
 
 ## 功能
 
 - 左右边栏可统一或独立设置；自动隐藏、固定、展开和多列表。
+- 可同时关闭左右边栏，重启后保留；通过系统托盘打开设置即可重新开启。
 - 拖入应用快捷方式、文件、文件夹和网页；排序、内部拖动和桌面快捷方式转移。
 - 经典图标、横向图片、纯文本；调整图标大小、间距、列数和按钮位置。
 - 贴边直角、直角悬浮、圆角悬浮；主题、透明、亚克力和图片背景。
@@ -37,6 +48,7 @@ Windows 11 左右自动隐藏快捷启动栏。鼠标移到屏幕边缘展开，
 Ctrl 快捷模式默认关闭，可在设置中开启：桌面或 EDock 设置窗口前台单按 Ctrl
 呼出并保持边栏，再按退出。同样支持上述快捷键，也支持滚轮选择。
 文本编辑、组合键、菜单、拖动和文件选择期间会暂停相关快捷键。
+对应边栏关闭时暂停 Ctrl 呼出，重新启用后恢复原来的快捷模式偏好；列表也会保留。
 
 ## 数据与卸载
 
@@ -57,6 +69,12 @@ Ctrl 快捷模式默认关闭，可在设置中开启：桌面或 EDock 设置�
 ```
 
 输出位于 `publish/win-x64/EDock.exe`。首次构建需要联网还原 NuGet 依赖。
+精简版可发布到独立目录，避免混入完整版依赖：
+
+```powershell
+dotnet publish ./src/EDock/EDock.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained false -p:WindowsAppSDKSelfContained=false -o ./publish/lite-win-x64
+```
+
 源码附带当前原生任务栏组件和对应源码；如需修改原生组件，用 Zig 0.14.1 构建：
 
 ```powershell
