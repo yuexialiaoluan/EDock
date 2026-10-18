@@ -5,20 +5,21 @@ Windows 11 左右自动隐藏快捷启动栏。鼠标移到屏幕边缘展开，
 ## 下载与运行
 
 在 [0.16.9 发布页](https://github.com/yuexialiaoluan/EDock/releases/tag/v0.16.9) 下载，
-完整解压后双击 **EDock.exe**。适用 Windows 11 x64，免安装。
+适用 Windows 11 x64，可选择安装版或免安装便携版。
 
-| 版本 | 压缩包 | 大小 | 运行环境 |
+| 版本 | 文件 | 大小 | 运行环境 |
 | --- | --- | --- | --- |
-| 完整版 | `EDock-0.16.9-win-x64.zip` | 98.67 MiB | 已包含运行依赖，适合首次使用 |
-| 精简版 | `EDock-0.16.9-lite-win-x64.zip` | 15.47 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
+| 安装版 | `EDock-0.16.9-setup-win-x64.exe` | 67.92 MiB | 已包含运行依赖，支持覆盖升级 |
+| 便携完整版 | `EDock-0.16.9-portable-win-x64.zip` | 98.68 MiB | 已包含运行依赖，解压运行 |
+| 便携精简版 | `EDock-0.16.9-portable-lite-win-x64.zip` | 14.70 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
 
-两版功能相同。精简版所需环境可从微软下载：
+三个版本功能相同。便携精简版所需环境可从微软下载：
 [.NET 8 x64 Runtime](https://aka.ms/dotnet/8.0/dotnet-runtime-win-x64.exe)、
 [Windows App Runtime 1.8 x64](https://aka.ms/windowsappsdk/1.8/latest/windowsappruntimeinstall-x64.exe)。
 Windows 不一定自带这些环境；已安装其他主版本也不能直接替代。
 
-升级前先从托盘退出旧版；请保留全部附属文件，不要直接在压缩包里运行。
-发布页附两版各自的 `SHA256.txt` 校验文件。
+便携版完整解压后双击 **EDock.exe**。升级前先从托盘退出旧版；请保留全部附属文件，不要直接在压缩包里运行。
+发布页附各版本对应的 `SHA256.txt` 校验文件。
 
 ## 功能
 
@@ -57,7 +58,11 @@ Ctrl 快捷模式默认关闭，可在设置中开启：桌面或 EDock 设置�
 自定义图片仍需保留。首次使用列表为空，开机启动、Ctrl 模式和任务栏材质默认关闭。
 
 退出后可备份整个配置目录。升级沿用现有配置，旧 EdgeDock 配置会在需要时自动迁移。
-卸载前关闭开机启动并退出，再删除程序文件夹；配置可按需保留。
+安装版可直接重新运行新版安装程序覆盖升级；升级前自动将现有配置完整备份到
+`%LOCALAPPDATA%\EDock-backups`，程序文件与个人配置分开存放，卸载时保留配置及备份。
+备份失败会停止安装；配置目录外引用的应用和图片不在备份范围内。
+恢复备份时先退出 EDock，再将所需备份目录中的内容复制回配置目录。
+卸载前关闭开机启动并退出；安装版从 Windows 设置中卸载，便携版删除程序文件夹。
 移动程序目录后，如使用开机启动，请在新位置重新开关该选项。
 
 ## 构建
@@ -83,6 +88,24 @@ dotnet publish ./src/EDock/EDock.csproj -c Release -p:Platform=x64 -r win-x64 --
 ```
 
 任务栏组件已经被资源管理器加载时，更新原生实现须同步增加组件和通信协议版本。
+
+## 制作发布包
+
+先按上述方式发布程序，再生成便携压缩包和 SHA-256 校验文件：
+
+```powershell
+./packaging/package-portable.ps1 -PublishDirectory ./publish/win-x64 -OutputDirectory ./artifacts
+./packaging/package-portable.ps1 -PublishDirectory ./publish/lite-win-x64 -OutputDirectory ./artifacts -Lite
+```
+
+安装包使用 [Inno Setup 6.7.3](https://jrsoftware.org/isinfo.php)，以完整版发布目录为输入：
+
+```powershell
+./packaging/build-installer.ps1 -PublishDirectory ./publish/win-x64 -OutputDirectory ./artifacts -InnoSetupCompiler 'C:\Tools\Inno Setup 6\ISCC.exe'
+```
+
+脚本从程序读取版本，使用 `-setup`、`-portable`、`-portable-lite` 命名，并附带第三方许可。
+安装包保持固定应用标识和默认安装位置；后续版本请保留这些值，以继续支持覆盖升级。
 
 ## 测试
 
