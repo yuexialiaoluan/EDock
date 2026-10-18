@@ -74,6 +74,10 @@ namespace EDock.Interop
         internal static uint GuiFlags { get; set; }
         internal static nint GuiActiveOverride { get; set; }
         internal static nint GuiCapture { get; set; }
+        internal static nint GuiCaret { get; set; }
+        internal static nint GuiMenuOwner { get; set; }
+        internal static nint GuiMoveSize { get; set; }
+        internal static nint ForegroundAfterGuiQuery { get; set; }
         internal static int GuiThreadQueries { get; private set; }
         internal static void Reset()
         {
@@ -82,7 +86,7 @@ namespace EDock.Interop
             KeyboardHookAvailable = MouseHookAvailable = HasForeground = true;
             ThrowInstall = InHook = Minimized = false; UnhookCount = 0; ForegroundClass = "Progman";
             ForegroundWindow = 123; WindowEnabled = GuiQuerySuccess = true;
-            GuiFlags = 0; GuiActiveOverride = GuiCapture = 0; GuiThreadQueries = 0;
+            GuiFlags = 0; GuiActiveOverride = GuiCapture = GuiCaret = GuiMenuOwner = GuiMoveSize = ForegroundAfterGuiQuery = 0; GuiThreadQueries = 0;
         }
         internal static nint SetWindowsHookEx(int type, KeyboardHookProc hook, nint module, uint thread)
         {
@@ -162,6 +166,10 @@ namespace EDock.Interop
             info.Flags = GuiFlags;
             info.Active = GuiActiveOverride != 0 ? GuiActiveOverride : ForegroundWindow;
             info.Capture = GuiCapture;
+            info.Caret = GuiCaret;
+            info.MenuOwner = GuiMenuOwner;
+            info.MoveSize = GuiMoveSize;
+            if (ForegroundAfterGuiQuery != 0) ForegroundWindow = ForegroundAfterGuiQuery;
             return GuiQuerySuccess;
         }
     }

@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/EDock/Services/QuickModeController.cs" Link="QuickModeController.cs" />
+    <Compile Include="../../src/EDock/Services/DesktopInputContext.cs" Link="DesktopInputContext.cs" />
   </ItemGroup>
 </Project>

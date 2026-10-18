@@ -202,6 +202,71 @@ using (var f = New(false))
     f.Up(0x44); f.Up(NativeMethods.VkLeftWindows); f.Flush(); f.Tap();
     Check(f.Mode.IsActive, "Win+D started before configuration does not block later Ctrl tap");
 }
+foreach (int stale in new[] { 0x85, 0x87, 0x43 })
+using (var f = New(false))
+{
+    // Some keyboard tools leave async F22 down before EDock starts, with no
+    // matching event delivered to our hook. The fix must not special-case F22.
+    NativeMethods.Keys.Add(stale);
+    f.Mode.Configure(true, "Left");
+    for (int i = 0; i < 20; i++) f.Tick();
+    f.Tap(); Check(f.Mode.IsActive, "unconfirmed initial async key cannot permanently block Ctrl entry");
+    f.Tap(); Check(!f.Mode.IsActive, "unconfirmed initial async key also permits Ctrl exit");
+    f.Mode.Configure(true, "Right");
+    f.Mode.Configure(false, "Right");
+    f.Mode.Configure(true, "Left");
+    f.Tap(); Check(f.Mode.IsActive, "initial async key stays unconfirmed across reconfiguration and hook reinstallation");
+    f.Mode.Exit();
+    Check(!f.Down(stale), "actual down of inherited key passes through and confirms its chord state");
+    f.Tap(); Check(!f.Mode.IsActive, "a hook-observed inherited key blocks Ctrl while genuinely held");
+    Check(!f.Up(stale), "observed inherited key retains its original release stream");
+    f.Tap(); Check(f.Mode.IsActive, "Ctrl works again after confirmed inherited key release");
+}
+foreach (int chord in new[] { 0x85, 0x43, NativeMethods.VkW, NativeMethods.VkS, 0x41, 0x44 })
+foreach (bool ctrlFirst in new[] { false, true })
+using (var f = New(false))
+{
+    NativeMethods.Keys.Add(0x85);
+    f.Mode.Configure(true, "Left");
+    if (ctrlFirst) { f.Down(NativeMethods.VkLeftControl); f.Down(chord); }
+    else { f.Down(chord); f.Down(NativeMethods.VkLeftControl); }
+    f.Up(NativeMethods.VkLeftControl); f.Up(chord); f.Flush();
+    Check(!f.Mode.IsActive && f.Launches == 0 && f.Moves.Count == 0, "real F22/C/WASD chord cannot become Ctrl tap despite inherited async state");
+    Check(NativeMethods.Events.All(value => !value.Suppressed), "real Ctrl chord preserves every key event with an inherited async key");
+    f.Tap(); Check(f.Mode.IsActive, "standalone Ctrl remains usable after a real chord with inherited async state");
+}
+foreach (int held in new[] { NativeMethods.VkShift, NativeMethods.VkLeftShift, NativeMethods.VkRightShift,
+    NativeMethods.VkMenu, NativeMethods.VkLeftMenu, NativeMethods.VkRightMenu,
+    NativeMethods.VkLeftWindows, NativeMethods.VkRightWindows })
+using (var f = New(false))
+{
+    f.Down(held); f.Mode.Configure(true, "Left");
+    f.Tap(); Check(!f.Mode.IsActive, "initial modifier always blocks Ctrl, even without a hook-observed down");
+    f.Up(held); f.Tap(); Check(f.Mode.IsActive, "initial modifier guard clears on release");
+}
+foreach (int held in new[] { 0x85, 0x43 })
+using (var f = New())
+{
+    f.Down(held);
+    f.Mode.Configure(true, "Right");
+    f.Mode.Configure(true, "Both");
+    f.Tap(); Check(!f.Mode.IsActive, "reconfiguration cannot downgrade an observed held key into an unconfirmed initial key");
+    f.Up(held); f.Tap(); Check(f.Mode.IsActive, "observed held key stops blocking after release following reconfiguration");
+}
+foreach (int held in new[] { NativeMethods.VkW, NativeMethods.VkS, 0x41, 0x44, 0x51, 0x45, 0x46, 0x47, NativeMethods.VkSpace, 0x09 })
+using (var f = New(false))
+{
+    f.Down(held); f.Mode.Configure(true, "Left");
+    f.Tap(); Check(f.Mode.IsActive, "unconfirmed initial command key does not block a fresh Ctrl tap");
+    Check(!f.Down(held) && !f.Up(held), "key held before hook installation keeps its repeat and release stream in quick mode");
+    f.Flush();
+    Check(f.Moves.Count == 0 && f.HorizontalMoves.Count == 0 && f.ListMoves.Count == 0
+        && f.Expansions == 0 && f.Pins == 0 && f.DockSwitches == 0 && f.Launches == 0, "preexisting command repeat cannot navigate, switch, expand, pin or launch");
+    Check(f.Down(held) && f.Up(held), "fresh command press becomes usable after its initial held stream ends");
+    f.Flush();
+    Check(f.Moves.Count + f.HorizontalMoves.Count + f.ListMoves.Count + f.Expansions + f.Pins
+        + f.DockSwitches + f.Launches == 1, "released initial command key triggers exactly one fresh action");
+}
 using (var f = New())
 {
     f.Tap(); int events = f.Active.Count; f.Mode.Dispose();
@@ -404,14 +469,14 @@ using (var f = New())
 using (var f = New())
 {
     f.Tap();
-    foreach (int key in new[] { 0x51, 0x45, 0x46 })
+    foreach (int key in new[] { 0x51, 0x45, 0x46, 0x47 })
     {
-        Check(f.Down(key), "quick Q/E/F fresh down swallowed");
-        for (int repeat = 0; repeat < 5; repeat++) Check(f.Down(key), "quick Q/E/F repeat swallowed");
-        Check(f.Up(key), "quick Q/E/F release swallowed");
+        Check(f.Down(key), "quick Q/E/F/G fresh down swallowed");
+        for (int repeat = 0; repeat < 5; repeat++) Check(f.Down(key), "quick Q/E/F/G repeat swallowed");
+        Check(f.Up(key), "quick Q/E/F/G release swallowed");
         f.Flush();
     }
-    Check(f.ListMoves.SequenceEqual(new[] { -1, 1 }) && f.Expansions == 1 && f.Mode.IsActive, "quick Q/E changes lists and F expands exactly once while retaining quick mode");
+    Check(f.ListMoves.SequenceEqual(new[] { -1, 1 }) && f.Expansions == 1 && f.Pins == 1 && f.Mode.IsActive, "quick Q/E changes lists and F/G expand or pin exactly once while retaining quick mode");
     f.Down(0x51); f.Down(0x45); f.Flush();
     Check(f.ListMoves.Count == 2, "opposite quick list keys held together cancel queued switches");
     f.Up(0x51); f.Up(0x45); f.Release();
@@ -422,9 +487,9 @@ using (var f = New(false))
     NativeMethods.ForegroundClass = "Notepad";
     f.Hover(side);
     Check(!f.Mode.IsEnabled && !f.Mode.IsActive && NativeMethods.KeyboardHook is not null && NativeMethods.MouseHook is null && f.Queue.Timer.IsRunning, "normal hover only installs temporary keyboard hook and reconciliation timer without enabling quick mode");
-    var actions = new[] { DockKeyboardAction.Previous, DockKeyboardAction.Next, DockKeyboardAction.PreviousList, DockKeyboardAction.NextList, DockKeyboardAction.ToggleExpanded, DockKeyboardAction.Launch };
+    var actions = new[] { DockKeyboardAction.Previous, DockKeyboardAction.Next, DockKeyboardAction.PreviousList, DockKeyboardAction.NextList, DockKeyboardAction.ToggleExpanded, DockKeyboardAction.TogglePinned, DockKeyboardAction.Launch };
     int index = 0;
-    foreach (int key in new[] { NativeMethods.VkW, NativeMethods.VkS, 0x51, 0x45, 0x46, NativeMethods.VkSpace })
+    foreach (int key in new[] { NativeMethods.VkW, NativeMethods.VkS, 0x51, 0x45, 0x46, 0x47, NativeMethods.VkSpace })
     {
         Check(f.Down(key), "normal hover fresh command down swallowed");
         if (key is not (NativeMethods.VkW or NativeMethods.VkS))
@@ -433,12 +498,12 @@ using (var f = New(false))
         f.Flush();
         Check(f.Commands.Count == ++index && f.Commands[^1] == new DockKeyboardRequest(side, actions[index - 1]), "normal command retains exact target side and action with one dispatch per press");
     }
-    Check(f.Active.Count == 0 && f.Moves.Count == 0 && f.Launches == 0 && f.ListMoves.Count == 0 && f.Expansions == 0, "normal commands never activate quick mode or invoke its pin/reveal event path");
+    Check(f.Active.Count == 0 && f.Moves.Count == 0 && f.Launches == 0 && f.ListMoves.Count == 0 && f.Expansions == 0 && f.Pins == 0, "normal commands never activate quick mode or invoke its pin/reveal event path");
     Check(!NativeMethods.SendWheel(120) && !NativeMethods.SendWheel(-120), "normal hover wheel remains ordinary scrolling");
     f.Hover(null);
     Check(NativeMethods.KeyboardHook is null && NativeMethods.MouseHook is null && !f.Queue.Timer.IsRunning, "leaving normal hover releases all native hooks and stops timer");
 }
-foreach (int key in new[] { NativeMethods.VkW, NativeMethods.VkSpace, 0x51, 0x46 })
+foreach (int key in new[] { NativeMethods.VkW, NativeMethods.VkSpace, 0x51, 0x46, 0x47 })
 using (var f = New(false))
 {
     Check(!f.Down(key), "key held before hover initially passes");
@@ -769,7 +834,173 @@ using (var f = New(false))
     f.Hover(null); f.Up(0x44); f.Flush();
     Check(NativeMethods.KeyboardHook is null && !f.Queue.Timer.IsRunning, "repeat-source release after hidden ordinary session retires all background resources");
 }
-Console.WriteLine($"PASS {checks} quick-mode and hover keyboard, wheel, lifecycle, companion-window and idle-allocation checks.");
+using (var f = New(false))
+{
+    NativeMethods.Keys.Add(0x85);
+    f.Mode.Configure(true, "Left");
+    for (int i = 0; i < 1000; i++) f.Tick();
+    long before = GC.GetAllocatedBytesForCurrentThread();
+    for (int i = 0; i < 10000; i++) f.Tick();
+    Check(GC.GetAllocatedBytesForCurrentThread() == before, "inherited async key reconciliation creates no steady managed allocations");
+    f.Tap(); Check(f.Mode.IsActive, "Ctrl still enters after prolonged inherited async key reconciliation");
+}
+foreach (bool quick in new[] { false, true })
+foreach (DockSide side in Enum.GetValues<DockSide>())
+using (var f = New(quick))
+{
+    if (quick) { f.Mode.Configure(true, side.ToString()); f.Hover(side == DockSide.Left ? DockSide.Right : DockSide.Left); f.Tap(); }
+    else f.Hover(side);
+    Check(f.Down(0x47), "G accepts a fresh press in either ordinary or quick mode");
+    f.Flush();
+    for (int repeat = 0; repeat < 12; repeat++)
+    {
+        Check(f.Down(0x47), "held G repeats stay consumed");
+        f.Flush(); f.Tick();
+        Check(quick ? f.Pins == 1 : f.Commands.Count == 1, "held G cannot repeatedly toggle the pin even across dispatcher drains and reconciliation ticks");
+    }
+    Check(f.Up(0x47), "G matching release remains consumed");
+    f.Flush();
+    Check(f.Down(0x47) && f.Up(0x47), "a second physical G press can toggle the pin again");
+    f.Flush();
+    if (quick)
+        Check(f.Pins == 2 && f.PinSides.All(value => value == side.ToString()) && f.Commands.Count == 0 && f.Mode.IsActive,
+            "quick G preserves the configured side and quick mode despite an opposite ordinary target");
+    else
+        Check(f.Commands.SequenceEqual(Enumerable.Repeat(new DockKeyboardRequest(side, DockKeyboardAction.TogglePinned), 2)) && f.Pins == 0 && !f.Mode.IsActive,
+            "ordinary G targets only the requested side without entering quick mode");
+}
+using (var f = New())
+{
+    f.Mode.Configure(true, "Both");
+    f.Down(NativeMethods.VkLeftControl); f.Up(NativeMethods.VkLeftControl);
+    Check(f.Down(0x47) && f.Up(0x47), "G can follow a pending Ctrl entry without waiting for a timer");
+    f.Flush();
+    Check(f.PinSides.SequenceEqual(new[] { "Both" }) && f.Mode.IsActive,
+        "both-side quick configuration dispatches one current-target pin event after entry");
+    var order = new List<string>();
+    f.Mode.DockSwitchRequested += (_, _) => order.Add("switch");
+    f.Mode.PinRequested += (_, _) => order.Add("pin");
+    f.Down(0x09); f.Up(0x09); f.Down(0x47); f.Up(0x47); f.Flush();
+    Check(order.SequenceEqual(new[] { "switch", "pin" }), "queued Tab reaches the caller before G so the new current side receives the pin request");
+}
+using (var f = New(false))
+{
+    f.Hover(DockSide.Left);
+    f.Mode.DockCommandRequested += (_, command) => { if (command.Action == DockKeyboardAction.TogglePinned) f.Hover(null); };
+    Check(f.Down(0x47), "ordinary G accepts the unpin command before its target disappears");
+    f.Flush();
+    Check(f.Commands.SequenceEqual(new[] { new DockKeyboardRequest(DockSide.Left, DockKeyboardAction.TogglePinned) }), "unpin callback executes exactly once on its original side");
+    Check(NativeMethods.KeyboardHook is not null && !f.Queue.Timer.IsRunning, "unpinning an away-from-pointer target retains only the swallowed key tail");
+    Check(f.Down(0x47) && f.Up(0x47), "unpinning does not leak held G repeats or the matching release");
+    f.Flush();
+    Check(f.Commands.Count == 1 && NativeMethods.KeyboardHook is null && !f.Queue.Timer.IsRunning, "unpinning and releasing G retire the temporary listener without another toggle");
+}
+foreach (int invalidation in Enumerable.Range(0, 5))
+using (var f = New(false))
+{
+    f.Hover(DockSide.Left); Check(f.Down(0x47), "ordinary G queues against its exact original target");
+    switch (invalidation)
+    {
+        case 0: f.Hover(null); break;
+        case 1: f.Hover(DockSide.Right); break;
+        case 2: f.PointerSide = null; break;
+        case 3: f.Busy = true; break;
+        case 4: f.Mode.Exit(); break;
+    }
+    f.Flush();
+    Check(f.Commands.Count == 0 && f.Pins == 0, "ordinary G cannot pin after target loss, side transfer, busy state or session exit");
+    Check(f.Up(0x47), "canceled ordinary pin still swallows its matching release");
+}
+foreach (int invalidation in Enumerable.Range(0, 4))
+using (var f = New())
+{
+    f.Tap(); Check(f.Down(0x47), "quick G initially queues in an eligible context");
+    switch (invalidation)
+    {
+        case 0: NativeMethods.ForegroundClass = "Notepad"; break;
+        case 1: f.Busy = true; break;
+        case 2: f.Mode.Exit(); break;
+        case 3: f.Mode.Configure(false, "Left"); break;
+    }
+    f.Flush();
+    Check(f.Pins == 0 && f.Commands.Count == 0 && !f.Mode.IsActive, "foreground loss, busy state, exit or disable cancels a deferred quick pin");
+    Check(f.Down(0x47) && f.Up(0x47), "canceled quick pin keeps the original repeat/release stream consumed");
+}
+foreach (bool quick in new[] { false, true })
+foreach (int modifier in new[] { NativeMethods.VkLeftControl, NativeMethods.VkRightControl, NativeMethods.VkShift,
+    NativeMethods.VkLeftShift, NativeMethods.VkRightShift, NativeMethods.VkMenu, NativeMethods.VkLeftMenu,
+    NativeMethods.VkRightMenu, NativeMethods.VkLeftWindows, NativeMethods.VkRightWindows })
+using (var f = New(quick))
+{
+    if (quick) f.Tap(); else f.Hover(DockSide.Left);
+    Check(!f.Down(modifier) && !f.Down(0x47) && !f.Up(0x47) && !f.Up(modifier), "modified G preserves every original key event");
+    f.Flush();
+    Check(f.Pins == 0 && f.Commands.Count == 0, "Ctrl/Shift/Alt/Win plus G cannot pin either side");
+}
+foreach (bool quick in new[] { false, true })
+using (var f = New(quick))
+{
+    if (quick) f.Tap(); else f.Hover(DockSide.Left);
+    Check(f.Down(0x47), "unmodified G queues before a later modifier");
+    f.Down(NativeMethods.VkLeftShift); f.Up(NativeMethods.VkLeftShift); f.Flush();
+    Check(f.Pins == 0 && f.Commands.Count == 0, "a modifier started after G permanently invalidates its queued pin even when released before dispatch");
+    Check(f.Up(0x47), "invalidated G preserves its swallowed matching release");
+}
+foreach (bool beforeDown in new[] { false, true })
+using (var f = New(false))
+{
+    f.DesktopOnlyTarget = true; f.Hover(DockSide.Right);
+    if (beforeDown) NativeMethods.ForegroundClass = "Notepad";
+    bool consumed = f.Down(0x47);
+    if (!beforeDown) NativeMethods.ForegroundClass = "Notepad";
+    f.Flush();
+    Check(consumed != beforeDown && f.Commands.Count == 0, "desktop-only G passes new application input or cancels a previously queued desktop pin");
+    Check(f.Up(0x47) == consumed, "desktop-only context loss preserves the original G stream ownership");
+}
+foreach (string desktop in new[] { "Progman", "WorkerW" })
+{
+    NativeMethods.Reset(); NativeMethods.ForegroundClass = desktop;
+    Check(DesktopInputContext.IsDesktopForeground(), "desktop foreground allows pinned-dock keyboard commands away from the pointer");
+}
+foreach (string application in new[] { "Chrome_WidgetWin_1", "Notepad", "Shell_TrayWnd", "WinUIDesktopWin32WindowClass" })
+{
+    NativeMethods.Reset(); NativeMethods.ForegroundClass = application;
+    Check(!DesktopInputContext.IsDesktopForeground(), "application, taskbar or settings foreground cannot inherit pointer-free desktop commands");
+}
+foreach (int invalidation in Enumerable.Range(0, 11))
+{
+    NativeMethods.Reset();
+    switch (invalidation)
+    {
+        case 0: NativeMethods.HasForeground = false; break;
+        case 1: NativeMethods.Minimized = true; break;
+        case 2: NativeMethods.WindowEnabled = false; break;
+        case 3: NativeMethods.GuiQuerySuccess = false; break;
+        case 4: NativeMethods.GuiActiveOverride = 456; break;
+        case 5: NativeMethods.GuiCapture = 123; break;
+        case 6: NativeMethods.GuiCaret = 123; break; // Explorer's desktop rename editor.
+        case 7: NativeMethods.GuiMenuOwner = 123; break;
+        case 8: NativeMethods.GuiMoveSize = 123; break;
+        case 9: NativeMethods.GuiFlags = 0x4; break;
+        case 10: NativeMethods.ForegroundAfterGuiQuery = 456; break;
+    }
+    Check(!DesktopInputContext.IsDesktopForeground(), "missing/disabled desktop, rename, menu, capture, move/resize or foreground drift blocks pointer-free commands");
+}
+foreach (int button in new[] { 1, 2, 4, 5, 6 })
+{
+    NativeMethods.Reset(); NativeMethods.Keys.Add(button);
+    Check(!DesktopInputContext.IsDesktopForeground(), "any held mouse button blocks pointer-free commands during desktop gestures");
+    NativeMethods.Keys.Remove(button);
+    Check(DesktopInputContext.IsDesktopForeground(), "desktop commands become eligible again after the mouse gesture ends");
+}
+NativeMethods.Reset(); NativeMethods.Keys.Add(0x85);
+Check(DesktopInputContext.IsDesktopForeground(), "inherited F22 state does not invalidate an otherwise idle desktop");
+for (int i = 0; i < 1000; i++) _ = DesktopInputContext.IsDesktopForeground();
+long desktopAllocationStart = GC.GetAllocatedBytesForCurrentThread();
+for (int i = 0; i < 10000; i++) _ = DesktopInputContext.IsDesktopForeground();
+Check(GC.GetAllocatedBytesForCurrentThread() == desktopAllocationStart, "desktop foreground eligibility adds no steady managed allocations");
+NativeMethods.Reset();
+Console.WriteLine($"PASS {checks} quick-mode, desktop and hover keyboard, wheel, lifecycle, companion-window and idle-allocation checks.");
 
 sealed class Fixture : IDisposable
 {
@@ -779,6 +1010,7 @@ sealed class Fixture : IDisposable
     internal bool Busy { get; set; }
     internal nint CompanionWindow { get; set; }
     internal DockSide? PointerSide { get; set; }
+    internal bool DesktopOnlyTarget { get; set; }
     internal bool ExitInsideLaunch { get; set; }
     internal List<bool> Active { get; } = new();
     internal List<int> Moves { get; } = new();
@@ -789,12 +1021,15 @@ sealed class Fixture : IDisposable
     internal List<int> ListMoves { get; } = new();
     internal List<DockKeyboardRequest> Commands { get; } = new();
     internal int Expansions { get; private set; }
+    internal int Pins { get; private set; }
+    internal List<string> PinSides { get; } = new();
     internal List<string> Order { get; } = new();
     internal int Launches { get; private set; }
     internal Fixture(Action<bool, string> check, bool enable, bool companionCallback = true)
     {
         NativeMethods.Reset(); _check = check;
-        Mode = new QuickModeController(Queue, () => Busy, companionCallback ? () => CompanionWindow : null, () => PointerSide);
+        Mode = new QuickModeController(Queue, () => Busy, companionCallback ? () => CompanionWindow : null,
+            () => !DesktopOnlyTarget || DesktopInputContext.IsDesktopForeground() ? PointerSide : null);
         Mode.ActiveChanged += (_, value) => { _check(!NativeMethods.InHook, "active UI event deferred from native hook"); Active.Add(value); Order.Add("active:" + value); };
         Mode.SelectionRequested += (_, direction) => { _check(!NativeMethods.InHook, "selection UI event deferred from native hook"); WheelMoves.Add(direction); Moves.Add(direction); Order.Add("move:" + direction); };
         Mode.VerticalSelectionRequested += (_, direction) => { _check(!NativeMethods.InHook, "vertical selection UI event deferred from native hook"); VerticalMoves.Add(direction); Moves.Add(direction); Order.Add("move:" + direction); };
@@ -803,6 +1038,7 @@ sealed class Fixture : IDisposable
         Mode.LaunchRequested += (_, _) => { _check(!NativeMethods.InHook && Mode.IsActive, "launcher called outside hook before selection cleared"); Launches++; Order.Add("launch"); if (ExitInsideLaunch) Mode.Exit(); };
         Mode.ListSwitchRequested += (_, direction) => { _check(!NativeMethods.InHook && Mode.IsActive, "quick list UI event deferred from native hook"); ListMoves.Add(direction); };
         Mode.ExpansionRequested += (_, _) => { _check(!NativeMethods.InHook && Mode.IsActive, "quick expansion UI event deferred from native hook"); Expansions++; };
+        Mode.PinRequested += (_, _) => { _check(!NativeMethods.InHook && Mode.IsActive, "quick pin UI event deferred from native hook"); Pins++; PinSides.Add(Mode.Side); Order.Add("pin"); };
         Mode.DockCommandRequested += (_, command) => { _check(!NativeMethods.InHook && !Mode.IsActive, "normal keyboard UI event deferred and never enters quick mode"); Commands.Add(command); };
         if (enable) Mode.Configure(true, "Left");
     }

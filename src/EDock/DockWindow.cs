@@ -151,12 +151,23 @@ public sealed class DockWindow : Window
         add.Flyout = addMenu;
         bottom.Children.Add(add);
         _pinButton = ToolButton("\uE718", "切换自动隐藏");
-        _pinButton.Click += (_, _) =>
+        int pinGestureToken = 0;
+        _pinButton.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) =>
         {
-            var current = App.Current.Settings.GetSideOptions(_side);
-            App.Current.Settings.SetSideAutoHide(_side, !current.AutoHide);
-            SaveOrReport();
-        };
+            if (e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse
+                && e.GetCurrentPoint(_pinButton).Properties.IsLeftButtonPressed)
+                pinGestureToken = _edge?.BeginPinPointerGesture() ?? 0;
+        }), true);
+        void RetirePinGesture(object sender, PointerRoutedEventArgs args)
+        {
+            int token = pinGestureToken;
+            DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => _edge?.CancelPinPointerGesture(token));
+        }
+        _pinButton.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(RetirePinGesture), true);
+        _pinButton.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(RetirePinGesture), true);
+        _pinButton.AddHandler(UIElement.PointerCanceledEvent,
+            new PointerEventHandler((_, _) => _edge?.CancelPinPointerGesture(pinGestureToken)), true);
+        _pinButton.Click += (_, _) => TogglePinned(restoreDesktopFocus: true);
         bottom.Children.Add(_pinButton);
         var settings = ToolButton("\uE713", "设置");
         settings.Click += (_, _) => App.Current.ShowSettings(_side);
@@ -193,7 +204,7 @@ public sealed class DockWindow : Window
             });
         };
         _edge.KeyboardTargetChanged += (_, _) => App.Current.RefreshPointerKeyboardTarget();
-        _edge.KeyboardHoldTick += (_, _) => App.Current.RefreshPointerKeyboardTarget();
+        _edge.KeyboardContextTick += (_, _) => App.Current.RefreshPointerKeyboardTarget();
         _edge.InnerEdgeHoverChanged += (_, visible) => SetExpansionHandleVisible(visible);
         _edge.RevealedChanged += (_, revealed) =>
         {
@@ -537,7 +548,11 @@ public sealed class DockWindow : Window
     internal bool IsSessionKeyboardTarget => _ordinaryKeyboardHold && !_closing && !_resourcesSuspended
         && !IsInteractionBusy && _edge.IsRevealed && !HasTextInputFocus();
 
-    private bool CanUseKeyboardNavigation => IsPointerKeyboardTarget || IsSessionKeyboardTarget;
+    internal bool IsPinnedKeyboardTarget => _edge.IsPinned && !_closing && !_resourcesSuspended
+        && !IsInteractionBusy && _edge.IsRevealed && !HasTextInputFocus();
+
+    private bool CanUseKeyboardNavigation => IsPointerKeyboardTarget || IsSessionKeyboardTarget
+        || (IsPinnedKeyboardTarget && DesktopInputContext.IsDesktopForeground());
 
     internal void SetOrdinaryKeyboardHold(bool enabled)
     {
@@ -581,6 +596,7 @@ public sealed class DockWindow : Window
             case DockKeyboardAction.PreviousList: SwitchList(-1); break;
             case DockKeyboardAction.NextList: SwitchList(1); break;
             case DockKeyboardAction.ToggleExpanded: ToggleExpanded(); break;
+            case DockKeyboardAction.TogglePinned: TogglePinned(); break;
             case DockKeyboardAction.Launch:
                 if (_ordinarySelection) LaunchQuickItem();
                 break;
@@ -589,6 +605,16 @@ public sealed class DockWindow : Window
 
     internal void SwitchKeyboardList(int direction) => SwitchList(direction);
     internal void ToggleKeyboardExpansion() => ToggleExpanded();
+    internal void ToggleKeyboardPin() => TogglePinned();
+
+    private void TogglePinned(bool restoreDesktopFocus = false)
+    {
+        var current = App.Current.Settings.GetSideOptions(_side);
+        App.Current.Settings.SetSideAutoHide(_side, !current.AutoHide);
+        SaveOrReport();
+        if (restoreDesktopFocus && !IsInteractionBusy && !HasTextInputFocus()) _edge?.RestoreDesktopFocus();
+        App.Current.RefreshPointerKeyboardTarget();
+    }
 
     public void SetQuickMode(bool enabled, bool selectionTarget = true)
     {

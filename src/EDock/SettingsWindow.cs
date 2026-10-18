@@ -348,11 +348,11 @@ public sealed class SettingsWindow : Window
         desktop.Children.Add(_removeDesktopShortcut);
         desktop.Children.Add(Help("仅处理从桌面拖入的 .lnk / .url 快捷方式：先保存快捷方式副本并保存边栏记录，再移除桌面原件。普通文件、文件夹和桌面以外的快捷方式不会移除。默认关闭。"));
 
-        var quick = AddSection("Ctrl 快捷模式", "普通模式下鼠标移入边栏即可使用快捷键；开启此选项后，还可用 Ctrl 呼出并保持边栏。此选项对左右边栏共同生效。");
+        var quick = AddSection("Ctrl 快捷模式", "鼠标移入边栏可使用快捷键；桌面前台时，固定边栏无需移入鼠标也能操作。开启此选项后，还可用 Ctrl 呼出并保持边栏。");
         _quickMode = Toggle("启用 Ctrl 快捷模式", settings.QuickModeEnabled);
         _quickModeSide = Choice("Ctrl 模式显示的边栏", new[] { "左侧边栏", "右侧边栏", "左右两侧边栏" }, settings.QuickModeSide switch { "Right" => 1, "Both" => 2, _ => 0 });
         quick.Children.Add(_quickMode); quick.Children.Add(_quickModeSide);
-        quick.Children.Add(Help("鼠标在已显示的边栏上时，W / S 上下选择，A / D 左右选择；长按 WASD 连续移动。Q / E 切换列表，F 展开或收回，空格打开选中项目，Tab 切换左右已启用边栏，无需开启 Ctrl 快捷模式。普通模式按 Tab 后，目标侧临时保持显示；移动鼠标、切换窗口或打开项目后结束临时保持。开启 Ctrl 模式后，在桌面或本设置窗口轻按 Ctrl 显示并保持所选边栏，再按退出；同样支持以上按键，也可用滚轮选择。Tab 可临时切到另一已启用侧，不修改呼出设置。切换到其他应用会退出 Ctrl 模式。文本编辑、组合键、菜单、拖动或文件选择期间暂停普通快捷键。Ctrl 呼出默认关闭。"));
+        quick.Children.Add(Help("W / S 上下选择，A / D 左右选择；长按 WASD 连续移动。Q / E 切换列表，F 展开或收回，G 固定或取消固定当前边栏，空格打开选中项目，Tab 切换左右已启用边栏，无需开启 Ctrl 快捷模式。普通模式下，鼠标移入已显示的边栏即可操作；桌面在前台时，固定边栏也接受鼠标移开后的按键。双侧固定默认操作左侧，之后沿用最近操作侧。按 Tab 后目标侧临时保持显示；移动鼠标、切换窗口或打开项目后结束临时保持。开启 Ctrl 模式后，在桌面或本设置窗口轻按 Ctrl 显示并保持所选边栏，再按退出；同样支持以上按键，也可用滚轮选择。首选侧关闭时改用另一已启用侧，两侧都关闭时暂停呼出。切换到其他应用会退出 Ctrl 模式；鼠标不在边栏时也暂停普通按键。文本编辑、桌面重命名、组合键、菜单、拖动或文件选择期间暂停桌面快捷键。Ctrl 呼出默认关闭。"));
         _quickMode.Toggled += (_, _) => UpdateQuickModeControls();
         UpdateQuickModeControls();
 
@@ -403,7 +403,7 @@ public sealed class SettingsWindow : Window
         exit.Click += (_, _) => App.Current.ExitApplication();
         footer.Children.Add(folder); footer.Children.Add(exit);
         _contentControls.Add(folder); _contentControls.Add(exit);
-        var versionSurface = new Border { Child = new TextBlock { Text = "版本 0.16.9", FontSize = 11, Opacity = .55 },
+        var versionSurface = new Border { Child = new TextBlock { Text = $"版本 {typeof(App).Assembly.GetName().Version?.ToString(3)}", FontSize = 11, Opacity = .55 },
             Padding = new Thickness(6, 3, 6, 3), Margin = new Thickness(6, 6, 0, 0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Left };
         _textSurfaces.Add(versionSurface); footer.Children.Add(versionSurface);
         Grid.SetRow(footer, 1); sidebar.Children.Add(footer);

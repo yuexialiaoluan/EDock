@@ -28,7 +28,7 @@ public sealed class EdgeController : IDisposable
     private bool _autoHide = true;
     private bool _quickMode;
     private bool _keyboardHold;
-    internal event EventHandler? KeyboardHoldTick;
+    internal event EventHandler? KeyboardContextTick;
     private int _hideDelayMs = 650;
     private int _revealDelayMs = 120;
     private int _revealDurationMs = 250;
@@ -49,9 +49,19 @@ public sealed class EdgeController : IDisposable
     private long _lastFullscreenCheck;
     private bool _fullscreen;
     private bool _disposed;
+    private static readonly NativeMethods.WindowSubclassProc ActivationCallback = OnActivationMessage;
+    private GCHandle _activationReference;
+    private nuint _activationSubclassId;
+    private readonly NativeMethods.MouseHookProc _activationHookCallback;
+    private nint _activationHook;
+    private nint _desktopFocusWindow;
+    private nint _pendingDesktopActivation;
+    private int _mouseDownGeneration;
+    private int _pinPointerGeneration;
 
     public bool IsRevealed { get; private set; }
     public bool IsQuickMode => _quickMode;
+    internal bool IsPinned => !_autoHide;
     public double AvailableWidthDip { get; private set; }
     public double AvailableHeightDip { get; private set; }
     public bool IsPointerNearInnerEdge { get; private set; }
@@ -67,6 +77,7 @@ public sealed class EdgeController : IDisposable
         _side = side;
         _isInteractionBusy = isInteractionBusy ?? (() => false);
         _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        _activationHookCallback = OnMouseActivation;
 
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_hwnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
@@ -99,7 +110,153 @@ public sealed class EdgeController : IDisposable
         _timer.IsRepeating = true;
         _timer.Tick += OnTick;
         _window.Closed += OnWindowClosed;
+        TrackDesktopActivation();
         _timer.Start();
+    }
+
+    private void TrackDesktopActivation()
+    {
+        try
+        {
+            _activationReference = GCHandle.Alloc(this);
+            nuint subclassId = unchecked((nuint)GCHandle.ToIntPtr(_activationReference));
+            if (!NativeMethods.SetWindowSubclass(_hwnd, ActivationCallback, subclassId, subclassId))
+            {
+                ReleaseActivationReference();
+                return;
+            }
+            _activationSubclassId = subclassId;
+            // Sample the actual desktop before WinUI handles the physical press.
+            // WM_ACTIVATE and CBT can already report a transient null foreground.
+            _activationHook = NativeMethods.SetWindowsHookEx(NativeMethods.WhMouseLowLevel,
+                _activationHookCallback, NativeMethods.GetModuleHandle(null), 0);
+        }
+        catch
+        {
+            // Focus restoration is optional; dock startup must still succeed.
+            ReleaseActivationReference();
+        }
+    }
+
+    private unsafe nint OnMouseActivation(int code, nint message, nint data)
+    {
+        try
+        {
+            if (!_disposed && code >= 0)
+            {
+                int mouseMessage = unchecked((int)message);
+                if (mouseMessage is NativeMethods.WmLeftButtonDown or 0x0204 or 0x0207 or 0x020B)
+                {
+                    // Every new button press retires both an unclaimed sample and
+                    // any older pin gesture. The hook does not allocate or consume input.
+                    _pendingDesktopActivation = 0;
+                    _desktopFocusWindow = 0;
+                    _pinPointerGeneration = 0;
+                    _mouseDownGeneration = _mouseDownGeneration == int.MaxValue ? 1 : _mouseDownGeneration + 1;
+                    if (mouseMessage == NativeMethods.WmLeftButtonDown && data != 0)
+                    {
+                        nint previous = NativeMethods.GetForegroundWindow();
+                        if (WindowClassReader.Read(previous) == BackgroundWindowKind.Desktop
+                            && NativeMethods.IsPointerOverWindow(_hwnd, ((NativeMethods.LowLevelMouseData*)data)->Position)
+                            && NativeMethods.GetForegroundWindow() == previous)
+                            _pendingDesktopActivation = previous;
+                    }
+                }
+            }
+        }
+        catch { /* Every mouse event must continue, even if tracking fails. */ }
+        return NativeMethods.CallNextHookEx(_activationHook, code, message, data);
+    }
+
+    private static nint OnActivationMessage(nint hwnd, uint message, nuint wParam, nint lParam, nuint subclassId, nuint referenceData)
+    {
+        try
+        {
+            if (GCHandle.FromIntPtr(unchecked((nint)referenceData)).Target is EdgeController edge)
+            {
+                if (message == NativeMethods.WmNcDestroy)
+                {
+                    NativeMethods.RemoveWindowSubclass(hwnd, ActivationCallback, subclassId);
+                    edge._activationSubclassId = 0;
+                    edge.DetachActivationHook();
+                    edge.ReleaseActivationReference();
+                }
+                else if (!edge._disposed && message == NativeMethods.WmActivate)
+                {
+                    if ((wParam & 0xffff) == 0)
+                    {
+                        edge._desktopFocusWindow = 0;
+                        edge._pendingDesktopActivation = 0;
+                        edge._pinPointerGeneration = 0;
+                    }
+                }
+            }
+        }
+        catch { /* Managed exceptions must not cross a native callback boundary. */ }
+        return NativeMethods.DefSubclassProc(hwnd, message, wParam, lParam);
+    }
+
+    internal int BeginPinPointerGesture()
+    {
+        nint desktop = _pendingDesktopActivation;
+        _pendingDesktopActivation = 0;
+        _desktopFocusWindow = 0;
+        _pinPointerGeneration = 0;
+        // Called only by the pin's physical mouse PointerPressed, never Click or
+        // UI automation. The event owns this down even if an up is already queued.
+        if (!_disposed && desktop != 0)
+        {
+            _desktopFocusWindow = desktop;
+            _pinPointerGeneration = _mouseDownGeneration;
+        }
+        return _pinPointerGeneration;
+    }
+
+    internal void CancelPinPointerGesture(int generation)
+    {
+        if (generation == 0 || generation != _pinPointerGeneration) return;
+        _pinPointerGeneration = 0;
+        _desktopFocusWindow = 0;
+    }
+
+    internal bool RestoreDesktopFocus()
+    {
+        nint desktop = _desktopFocusWindow;
+        int generation = _pinPointerGeneration;
+        _desktopFocusWindow = 0;
+        _pinPointerGeneration = 0;
+        // Explorer's foreground WorkerW can report itself as invisible. The
+        // exact desktop captured for this pointer gesture remains the authority.
+        if (_disposed || generation == 0 || NativeMethods.GetForegroundWindow() != _hwnd || desktop == 0
+            || !NativeMethods.IsWindow(desktop)
+            || !NativeMethods.IsWindowEnabled(desktop) || NativeMethods.IsIconic(desktop)
+            || WindowClassReader.Read(desktop) != BackgroundWindowKind.Desktop)
+            return false;
+        return NativeMethods.SetForegroundWindow(desktop);
+    }
+
+    private void ReleaseActivationReference()
+    {
+        _desktopFocusWindow = 0;
+        _pendingDesktopActivation = 0;
+        _pinPointerGeneration = 0;
+        if (_activationSubclassId == 0 && _activationHook == 0 && _activationReference.IsAllocated)
+            _activationReference.Free();
+    }
+
+    private void DetachActivationHook()
+    {
+        if (_activationHook != 0 && NativeMethods.UnhookWindowsHookEx(_activationHook)) _activationHook = 0;
+    }
+
+    private void DetachActivationTracking()
+    {
+        DetachActivationHook();
+        if (_activationSubclassId != 0
+            && (NativeMethods.RemoveWindowSubclass(_hwnd, ActivationCallback, _activationSubclassId) || !NativeMethods.IsWindow(_hwnd)))
+            _activationSubclassId = 0;
+        // Retain the GCHandle until both native callbacks are gone.
+        ReleaseActivationReference();
     }
 
     public void Configure(bool autoHide, int hideDelayMs, int revealDelayMs, double widthDip,
@@ -262,7 +419,9 @@ public sealed class EdgeController : IDisposable
     private void OnTick(DispatcherQueueTimer sender, object args)
     {
         if (_disposed) return;
-        if (_keyboardHold) KeyboardHoldTick?.Invoke(this, EventArgs.Empty);
+        // Reuse edge detection to discover desktop input when a fixed dock's
+        // pointer is elsewhere, even if Ctrl quick mode is disabled.
+        if (_keyboardHold || !_autoHide) KeyboardContextTick?.Invoke(this, EventArgs.Empty);
         var now = Environment.TickCount64;
         if (now - _lastMotionCheck >= 1000) RefreshMotionPreference();
         UpdateAnimation(now);
@@ -463,6 +622,9 @@ public sealed class EdgeController : IDisposable
         _timer.Stop();
         _timer.Tick -= OnTick;
         _window.Closed -= OnWindowClosed;
+        DetachActivationTracking();
+        // If removal fails on a live HWND, retain the reference until
+        // WM_NCDESTROY so no callback can observe a freed GCHandle.
         if (_dpiProbe != 0)
         {
             NativeMethods.DestroyWindow(_dpiProbe);

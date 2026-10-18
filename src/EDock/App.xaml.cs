@@ -19,8 +19,10 @@ public partial class App : Application
     private bool _quickDockSwitched;
     private DockSide? _ordinaryKeyboardSide;
     private DockSide? _ordinaryKeyboardSource;
+    private DockSide _desktopKeyboardSide = DockSide.Left;
     private EDock.Interop.NativeMethods.Point _keyboardPointerAnchor;
     private nint _keyboardForeground;
+    private bool _keyboardSessionFromDesktop;
     private bool _changingKeyboardTarget;
     private SettingsStore _store = new();
     private static readonly System.Reflection.PropertyInfo[] SettingsProperties = typeof(DockSettings).GetProperties()
@@ -109,9 +111,11 @@ public partial class App : Application
         _quickMode.LaunchRequested += (_, _) => UseQuickTarget(dock => dock.LaunchQuickItem());
         _quickMode.ListSwitchRequested += (_, direction) => UseQuickTarget(dock => dock.SwitchKeyboardList(direction));
         _quickMode.ExpansionRequested += (_, _) => UseQuickTarget(dock => dock.ToggleKeyboardExpansion());
+        _quickMode.PinRequested += (_, _) => UseQuickTarget(dock => dock.ToggleKeyboardPin());
         _quickMode.DockCommandRequested += (_, request) =>
         {
             if (request.Action == DockKeyboardAction.SwitchDock) { SwitchOrdinaryDock(request.Side); return; }
+            _desktopKeyboardSide = request.Side;
             var dock = request.Side == DockSide.Left ? _left : _right;
             dock?.HandleKeyboardAction(request.Action);
         };
@@ -234,6 +238,10 @@ public partial class App : Application
             TaskbarStatusChanged?.Invoke(this, EventArgs.Empty);
             if (requireTaskbar) throw;
         }
+        // Retire an active gesture before destroying or adding its windows.
+        // The next Ctrl tap can bind and reveal the available target afresh.
+        if ((_left is not null) != Settings.LeftEnabled || (_right is not null) != Settings.RightEnabled)
+            _quickMode?.Exit();
         if ((_ordinaryKeyboardSide == DockSide.Left || _ordinaryKeyboardSource == DockSide.Left) && !Settings.LeftEnabled
             || (_ordinaryKeyboardSide == DockSide.Right || _ordinaryKeyboardSource == DockSide.Right) && !Settings.RightEnabled)
             EndOrdinaryKeyboardSession();
@@ -250,14 +258,9 @@ public partial class App : Application
 
     private void ConfigureQuickMode()
     {
-        // Keep the user's preference, but only listen for Ctrl when its chosen
-        // dock exists. Reopening that dock restores quick mode automatically.
-        bool available = Settings.QuickModeSide switch
-        {
-            "Right" => _right is not null,
-            "Both" => _left is not null || _right is not null,
-            _ => _left is not null
-        };
+        // Preserve the preference and fall back to the other enabled dock.
+        // With both docks closed there is still no Ctrl listener or target.
+        bool available = _left is not null || _right is not null;
         bool enabled = Settings.QuickModeEnabled && available;
         if (_quickMode is not null && (_quickMode.IsEnabled != enabled || _quickMode.Side != Settings.QuickModeSide))
             EndOrdinaryKeyboardSession();
@@ -267,7 +270,7 @@ public partial class App : Application
 
     private DockSide? PointerKeyboardTarget()
     {
-        if (_exiting || _exitPending) return null;
+        if (_exiting || _exitPending || _quickMode?.IsActive == true) return null;
         // A dock never takes foreground focus on hover. Let ordinary editing in
         // the settings window keep its letters even with the pointer at an edge.
         if (_settingsWindow?.QuickModeWindowHandle is nint handle && handle != 0
@@ -287,6 +290,7 @@ public partial class App : Application
             bool valid = _quickMode?.IsActive != true && target?.IsSessionKeyboardTarget == true && source is not null
                 && !(_settingsWindow?.IsQuickModeBusy ?? false) && _tray?.IsMenuOpen != true
                 && !(_left?.IsInteractionBusy ?? false) && !(_right?.IsInteractionBusy ?? false)
+                && (!_keyboardSessionFromDesktop || DesktopInputContext.IsDesktopForeground())
                 && EDock.Interop.NativeMethods.GetForegroundWindow() == _keyboardForeground
                 && EDock.Interop.NativeMethods.GetCursorPos(out var point)
                 && Math.Abs((long)point.X - _keyboardPointerAnchor.X) <= 8
@@ -296,8 +300,16 @@ public partial class App : Application
             if (valid) return sessionSide;
             EndOrdinaryKeyboardSession();
         }
-        if (_left?.IsPointerKeyboardTarget == true) return DockSide.Left;
-        if (_right?.IsPointerKeyboardTarget == true) return DockSide.Right;
+        if (_left?.IsPointerKeyboardTarget == true) return _desktopKeyboardSide = DockSide.Left;
+        if (_right?.IsPointerKeyboardTarget == true) return _desktopKeyboardSide = DockSide.Right;
+        // Fixed docks also accept commands away from the pointer, but only
+        // while the desktop itself owns input. Never borrow another app's keys.
+        if (!DesktopInputContext.IsDesktopForeground()) return null;
+        bool left = _left?.IsPinnedKeyboardTarget == true;
+        bool right = _right?.IsPinnedKeyboardTarget == true;
+        if (_desktopKeyboardSide == DockSide.Right && right) return DockSide.Right;
+        if (left) return DockSide.Left;
+        if (right) return DockSide.Right;
         return null;
     }
 
@@ -313,8 +325,8 @@ public partial class App : Application
     private DockWindow? QuickTarget()
     {
         if (_quickDockSwitched) return _quickTargetSide == DockSide.Right ? _right ?? _left : _left ?? _right;
-        if (_quickMode?.Side == "Right") return _right;
-        if (_quickMode?.Side != "Both") return _left;
+        if (_quickMode?.Side == "Right") return _right ?? _left;
+        if (_quickMode?.Side != "Both") return _left ?? _right;
         if (_right?.IsPointerOverDock == true) _quickTargetSide = DockSide.Right;
         else if (_left?.IsPointerOverDock == true) _quickTargetSide = DockSide.Left;
         return _quickTargetSide == DockSide.Right ? _right ?? _left : _left ?? _right;
@@ -354,12 +366,14 @@ public partial class App : Application
         {
             if (!EDock.Interop.NativeMethods.GetCursorPos(out _keyboardPointerAnchor)) return;
             _keyboardForeground = EDock.Interop.NativeMethods.GetForegroundWindow();
+            _keyboardSessionFromDesktop = DesktopInputContext.IsDesktopForeground();
             _ordinaryKeyboardSource = from;
         }
         _changingKeyboardTarget = true;
         try
         {
             _ordinaryKeyboardSide = from == DockSide.Left ? DockSide.Right : DockSide.Left;
+            _desktopKeyboardSide = _ordinaryKeyboardSide.Value;
             // Establish the new hold before releasing the old one so target changes
             // cannot invalidate a half-completed switch through an edge event.
             target.SetOrdinaryKeyboardHold(true);
@@ -379,6 +393,7 @@ public partial class App : Application
         _changingKeyboardTarget = true;
         _ordinaryKeyboardSide = null;
         _ordinaryKeyboardSource = null;
+        _keyboardSessionFromDesktop = false;
         try
         {
             _left?.SetOrdinaryKeyboardHold(false);

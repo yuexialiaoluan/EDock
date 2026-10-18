@@ -6,13 +6,13 @@ using Microsoft.UI.Dispatching;
 
 namespace EDock.Services;
 
-public enum DockKeyboardAction { Previous, Next, PreviousList, NextList, ToggleExpanded, Launch, PreviousColumn, NextColumn, SwitchDock }
+public enum DockKeyboardAction { Previous, Next, PreviousList, NextList, ToggleExpanded, Launch, PreviousColumn, NextColumn, SwitchDock, TogglePinned }
 public readonly record struct DockKeyboardRequest(DockSide Side, DockKeyboardAction Action);
 
 /// <summary>Toggles quick mode on the desktop or the supplied companion window after a standalone Ctrl tap.</summary>
 public sealed class QuickModeController : IDisposable
 {
-    private enum PendingAction { Enter, Leave, Previous, Next, PreviousList, NextList, ToggleExpanded, Launch, PreviousColumn, NextColumn, SwitchDock, PreviousRow, NextRow }
+    private enum PendingAction { Enter, Leave, Previous, Next, PreviousList, NextList, ToggleExpanded, Launch, PreviousColumn, NextColumn, SwitchDock, PreviousRow, NextRow, TogglePinned }
     private readonly record struct PendingRequest(PendingAction Action, DockSide? PointerSide = null, int PointerGeneration = 0);
     private readonly record struct MovementSource(PendingRequest Request, int QuickGeneration);
     private const int VkA = 0x41, VkD = 0x44, VkTab = 0x09;
@@ -27,6 +27,9 @@ public sealed class QuickModeController : IDisposable
     private readonly NativeMethods.MouseHookProc _mouseHook;
     private readonly Queue<PendingRequest> _pending = new();
     private readonly HashSet<int> _pressedKeys = new();
+    // An async snapshot can contain stale keys injected before our hook existed.
+    // Keep their held-input protection without treating them as an observed chord.
+    private readonly HashSet<int> _initialKeys = new();
     private readonly HashSet<int> _controlKeys = new();
     private readonly HashSet<int> _suppressedKeys = new();
     private readonly Dictionary<int, MovementSource> _movementSources = new();
@@ -61,6 +64,7 @@ public sealed class QuickModeController : IDisposable
     public event EventHandler? LaunchRequested;
     public event EventHandler<int>? ListSwitchRequested;
     public event EventHandler? ExpansionRequested;
+    public event EventHandler? PinRequested;
     public event EventHandler<DockKeyboardRequest>? DockCommandRequested;
 
     public QuickModeController(DispatcherQueue dispatcherQueue, Func<bool>? isBusy = null, Func<nint>? companionWindow = null, Func<DockSide?>? pointerTarget = null)
@@ -211,8 +215,10 @@ public sealed class QuickModeController : IDisposable
 
     private void ReadInitialKeys()
     {
-        int[] suppressedHeld = _pressedKeys.Where(_suppressedKeys.Contains).ToArray();
+        int[] observedHeld = _pressedKeys.Where(key => !_initialKeys.Contains(key)
+            && (_suppressedKeys.Contains(key) || IsKeyPressed(key))).ToArray();
         _pressedKeys.Clear();
+        _initialKeys.Clear();
         _controlKeys.Clear();
         for (int key = 8; key < 255; key++)
         {
@@ -221,9 +227,15 @@ public sealed class QuickModeController : IDisposable
             if (key == NativeMethods.VkShift && (IsKeyPressed(NativeMethods.VkLeftShift) || IsKeyPressed(NativeMethods.VkRightShift))) continue;
             if (key == NativeMethods.VkMenu && (IsKeyPressed(NativeMethods.VkLeftMenu) || IsKeyPressed(NativeMethods.VkRightMenu))) continue;
             _pressedKeys.Add(key);
+            if (!IsModifier(key)) _initialKeys.Add(key);
         }
-        // A swallowed down is absent from GetAsyncKeyState, but is still physically held.
-        foreach (int key in suppressedHeld) _pressedKeys.Add(key);
+        // Preserve confirmed downs across reconfiguration. Swallowed downs have
+        // no async state, but still need their matching release and chord guard.
+        foreach (int key in observedHeld)
+        {
+            _pressedKeys.Add(key);
+            _initialKeys.Remove(key);
+        }
         if (IsKeyPressed(NativeMethods.VkLeftControl)) _controlKeys.Add(NativeMethods.VkLeftControl);
         if (IsKeyPressed(NativeMethods.VkRightControl)) _controlKeys.Add(NativeMethods.VkRightControl);
         if (_controlKeys.Count == 0 && IsKeyPressed(NativeMethods.VkControl)) _controlKeys.Add(NativeMethods.VkControl);
@@ -238,6 +250,7 @@ public sealed class QuickModeController : IDisposable
         // OLE drag loops can omit a key-up. Swallowed downs have no async state,
         // so retain those until their matching hook release arrives.
         _pressedKeys.RemoveWhere(_isReleasedKey);
+        _initialKeys.RemoveWhere(_isReleasedKey);
         DrainPending();
         // Reconcile missed Ctrl events without treating polling as a new tap.
         if (IsKeyPressed(NativeMethods.VkControl) != (_controlKeys.Count > 0))
@@ -263,7 +276,7 @@ public sealed class QuickModeController : IDisposable
         {
             if (!_controlKeys.Add(key)) return; // A repeated down cannot start another tap.
             if (_controlKeys.Count > 1) { _tapCandidate = false; UpdateTimerCadence(); return; }
-            _tapCandidate = _enabled && _pressedKeys.Count == 0 && CanUseQuickMode();
+            _tapCandidate = _enabled && !HasObservedKeys() && CanUseQuickMode();
             if (!_tapCandidate && _gestureActive) CancelFromHook();
             UpdateTimerCadence();
             return;
@@ -271,7 +284,7 @@ public sealed class QuickModeController : IDisposable
         bool wasHeld = _controlKeys.Remove(key);
         if (!wasHeld) _tapCandidate = false;
         if (_controlKeys.Count != 0) { UpdateTimerCadence(); return; }
-        bool toggle = _tapCandidate && _enabled && _pressedKeys.Count == 0 && CanUseQuickMode();
+        bool toggle = _tapCandidate && _enabled && !HasObservedKeys() && CanUseQuickMode();
         _tapCandidate = false;
         if (!toggle) { UpdateTimerCadence(); return; }
         _gestureActive = !_gestureActive;
@@ -302,6 +315,7 @@ public sealed class QuickModeController : IDisposable
                 return NativeMethods.CallNextHookEx(_keyboardHandle, code, message, data);
             }
             bool previouslyPressed = _pressedKeys.Contains(key);
+            _initialKeys.Remove(key);
             if (down) _pressedKeys.Add(key); else _pressedKeys.Remove(key);
             // Any other key, including its release, makes Ctrl a chord rather than a tap.
             _tapCandidate = false;
@@ -328,20 +342,21 @@ public sealed class QuickModeController : IDisposable
                 }
                 if (!_gestureActive || !down || !TryGetAction(key, out var quickAction))
                     return NativeMethods.CallNextHookEx(_keyboardHandle, code, message, data);
+                // A down that predated quick mode keeps its original repeat/up
+                // stream. Only a new press can become a quick-mode command.
+                if (previouslyPressed)
+                    return NativeMethods.CallNextHookEx(_keyboardHandle, code, message, data);
                 _suppressedKeys.Add(key);
-                if (!previouslyPressed)
+                if (quickAction == PendingAction.Launch)
                 {
-                    if (quickAction == PendingAction.Launch)
-                    {
-                        _gestureActive = false;
-                        _wheelRemainder = 0;
-                    }
-                    if (HasOppositeKeys(quickAction)) CancelPendingGroup(quickAction);
-                    else
-                    {
-                        if (IsMovement(quickAction)) _movementSources[key] = new(new(quickAction), _quickGeneration);
-                        Enqueue(quickAction);
-                    }
+                    _gestureActive = false;
+                    _wheelRemainder = 0;
+                }
+                if (HasOppositeKeys(quickAction)) CancelPendingGroup(quickAction);
+                else
+                {
+                    if (IsMovement(quickAction)) _movementSources[key] = new(new(quickAction), _quickGeneration);
+                    Enqueue(quickAction);
                 }
                 return 1;
             }
@@ -453,6 +468,7 @@ public sealed class QuickModeController : IDisposable
             0x51 => PendingAction.PreviousList,
             0x45 => PendingAction.NextList,
             0x46 => PendingAction.ToggleExpanded,
+            0x47 => PendingAction.TogglePinned,
             NativeMethods.VkSpace => PendingAction.Launch,
             _ => PendingAction.Leave
         };
@@ -582,6 +598,9 @@ public sealed class QuickModeController : IDisposable
                     case PendingAction.ToggleExpanded:
                         if (IsActive) ExpansionRequested?.Invoke(this, EventArgs.Empty);
                         break;
+                    case PendingAction.TogglePinned:
+                        if (IsActive) PinRequested?.Invoke(this, EventArgs.Empty);
+                        break;
                     case PendingAction.Launch:
                         if (!IsActive) break;
                         // Preserve the selected tile until the launch callback has read it.
@@ -604,6 +623,7 @@ public sealed class QuickModeController : IDisposable
         PendingAction.PreviousList => DockKeyboardAction.PreviousList,
         PendingAction.NextList => DockKeyboardAction.NextList,
         PendingAction.ToggleExpanded => DockKeyboardAction.ToggleExpanded,
+        PendingAction.TogglePinned => DockKeyboardAction.TogglePinned,
         _ => DockKeyboardAction.Launch
     };
 
@@ -618,6 +638,13 @@ public sealed class QuickModeController : IDisposable
     }
 
     private bool IsReleasedKey(int key) => !_suppressedKeys.Contains(key) && !IsKeyPressed(key);
+
+    private bool HasObservedKeys()
+    {
+        foreach (int key in _pressedKeys)
+            if (!_initialKeys.Contains(key)) return true;
+        return false;
+    }
 
     private bool CanUseQuickMode()
     {

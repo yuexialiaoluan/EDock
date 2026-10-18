@@ -46,6 +46,8 @@ internal static class NativeMethods
     internal const int WmSysKeyDown = 0x0104;
     internal const int WmSysKeyUp = 0x0105;
     internal const int WmLeftButtonDown = 0x0201;
+    internal const uint WmActivate = 0x0006;
+    internal const uint WmNcDestroy = 0x0082;
     internal const int WmMouseWheel = 0x020A;
     internal const int WmMouseHorizontalWheel = 0x020E;
     internal const uint GuiInteractionModes = 0x0002 | 0x0004 | 0x0008 | 0x0010;
@@ -59,6 +61,7 @@ internal static class NativeMethods
 
     internal delegate nint KeyboardHookProc(int code, nint message, nint data);
     internal delegate nint MouseHookProc(int code, nint message, nint data);
+    internal delegate nint WindowSubclassProc(nint hwnd, uint message, nuint wParam, nint lParam, nuint subclassId, nuint referenceData);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct LowLevelKeyboardData
@@ -150,6 +153,25 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     internal static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetForegroundWindow(nint hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindow(nint hwnd);
+
+    [DllImport("comctl32.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetWindowSubclass(nint hwnd, WindowSubclassProc callback, nuint subclassId, nuint referenceData);
+
+    [DllImport("comctl32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool RemoveWindowSubclass(nint hwnd, WindowSubclassProc callback, nuint subclassId);
+
+    [DllImport("comctl32.dll", ExactSpelling = true)]
+    internal static extern nint DefSubclassProc(nint hwnd, uint message, nuint wParam, nint lParam);
 
     [DllImport("user32.dll")]
     internal static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
