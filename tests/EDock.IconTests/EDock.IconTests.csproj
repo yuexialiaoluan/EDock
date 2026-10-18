@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/EDock/Models/ShortcutItem.cs" Link="Models/ShortcutItem.cs" />
+    <Compile Include="../../src/EDock/Services/ShortcutService.cs" Link="Services/ShortcutService.cs" />
+    <Compile Include="../../src/EDock/Services/NativeShellIcon.cs" Link="Services/NativeShellIcon.cs" />
+  </ItemGroup>
+</Project>

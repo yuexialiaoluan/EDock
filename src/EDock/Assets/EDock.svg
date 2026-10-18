@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 256 256">
+  <title>EDock</title>
+  <rect x="16" y="16" width="224" height="224" rx="56" fill="#247AF0"/>
+  <path fill="#fff" d="M64 64H192V96H96V112H168V144H96V160H192V192H64Z"/>
+</svg>

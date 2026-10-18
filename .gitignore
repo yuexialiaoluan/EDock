@@ -1,0 +1,12 @@
+﻿**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.pdb
+publish/
+artifacts/
+*.zip
+.env
+.env.*

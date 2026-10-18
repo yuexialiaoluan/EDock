@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.26100.0</TargetFramework>
+    <WindowsSdkPackageVersion>10.0.26100.56</WindowsSdkPackageVersion>
+    <TargetPlatformMinVersion>10.0.22000.0</TargetPlatformMinVersion>
+    <RootNamespace>EDock</RootNamespace>
+    <AssemblyName>EDock</AssemblyName>
+    <Product>EDock</Product>
+    <Title>EDock</Title>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>Assets/EDock.ico</ApplicationIcon>
+    <Version>0.16.8</Version>
+    <Description>EDock · Windows 11 左右自动隐藏快捷启动栏</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- Precompile managed startup paths rather than JIT them at every launch.
+         Keep the self-contained directory layout: single-file extraction would
+         add disk work to the first launch after an update. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishSingleFile>false</PublishSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="Assets\EDock.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Native\EDock.Taskbar.0.14.3.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\NativeThirdPartyNotices.txt" Link="NativeThirdPartyNotices.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" />
+  </ItemGroup>
+  <!-- Unpackaged WinUI generates these after normal Content discovery. Include
+       the merged resource index and compiled XAML in dotnet publish explicitly. -->
+  <Target Name="IncludeWinUIResourcesInPublish" AfterTargets="Publish">
+    <Error Condition="!Exists('$(TargetDir)$(TargetName).pri')" Text="The WinUI resource index is missing from the build output." />
+    <Error Condition="!Exists('$(TargetDir)App.xbf')" Text="The compiled WinUI application XAML is missing from the build output." />
+    <ItemGroup>
+      <_WinUICompiledXaml Include="$(TargetDir)**\*.xbf" />
+    </ItemGroup>
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pri" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_WinUICompiledXaml)" DestinationFiles="@(_WinUICompiledXaml->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\EDock.ico" DestinationFolder="$(PublishDir)Assets" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

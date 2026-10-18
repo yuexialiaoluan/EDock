@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/EDock/Models/*.cs" Link="Models/%(Filename)%(Extension)" />
+    <Compile Include="../../src/EDock/Services/SettingsEditorDraft.cs" Link="Services/SettingsEditorDraft.cs" />
+  </ItemGroup>
+</Project>

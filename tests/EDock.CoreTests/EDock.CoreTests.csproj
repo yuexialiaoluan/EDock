@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/EDock/Models/*.cs" Link="Models/%(Filename)%(Extension)" />
+    <Compile Include="../../src/EDock/Services/SettingsStore.cs" Link="Services/SettingsStore.cs" />
+    <Compile Include="../../src/EDock/Services/ConfigurationDirectoryMigration.cs" Link="Services/ConfigurationDirectoryMigration.cs" />
+    <Compile Include="../../src/EDock/Services/ShortcutService.cs" Link="Services/ShortcutService.cs" />
+    <Compile Include="../../src/EDock/Services/ShortcutSortService.cs" Link="Services/ShortcutSortService.cs" />
+    <Compile Include="../../src/EDock/Services/DesktopShortcutTransfer.cs" Link="Services/DesktopShortcutTransfer.cs" />
+    <Compile Include="../../src/EDock/Services/DesktopShortcutRestore.cs" Link="Services/DesktopShortcutRestore.cs" />
+    <Compile Include="../../src/EDock/Services/ManagedShortcutStorage.cs" Link="Services/ManagedShortcutStorage.cs" />
+    <Compile Include="../../src/EDock/Services/DeletedShortcutRecovery.cs" Link="Services/DeletedShortcutRecovery.cs" />
+    <Compile Include="../../src/EDock/Services/EdgeGeometry.cs" Link="Services/EdgeGeometry.cs" />
+    <Compile Include="../../src/EDock/Services/DockScrollLogic.cs" Link="Services/DockScrollLogic.cs" />
+    <Compile Include="../../src/EDock/Services/DockLayoutLogic.cs" Link="Services/DockLayoutLogic.cs" />
+    <Compile Include="../../src/EDock/Services/DockNavigationLogic.cs" Link="Services/DockNavigationLogic.cs" />
+    <Compile Include="../../src/EDock/Services/EdgeAnimation.cs" Link="Services/EdgeAnimation.cs" />
+    <Compile Include="../../src/EDock/Services/WindowClassReader.cs" Link="Services/WindowClassReader.cs" />
+  </ItemGroup>
+</Project>
