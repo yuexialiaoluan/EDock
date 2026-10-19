@@ -26,6 +26,9 @@ public sealed class EdgeController : IDisposable
     private nint _monitor;
     private uint _dpi;
     private bool _autoHide = true;
+    private bool _suppressRevealWhenFullscreen = true;
+    private bool _keepPinnedBelowWindows = true;
+    private bool? _appliedTopmost;
     private bool _quickMode;
     private bool _keyboardHold;
     internal event EventHandler? KeyboardContextTick;
@@ -261,12 +264,17 @@ public sealed class EdgeController : IDisposable
 
     public void Configure(bool autoHide, int hideDelayMs, int revealDelayMs, double widthDip,
         int revealDurationMs = 250, int hideDurationMs = 250, string animationStyle = "Slide", string dockFrameStyle = "Edge", double? regularWidthDip = null,
-        double floatingTopInsetDip = 8, double floatingBottomInsetDip = 8)
+        double floatingTopInsetDip = 8, double floatingBottomInsetDip = 8,
+        bool suppressRevealWhenFullscreen = true, bool keepPinnedBelowWindows = true)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!double.IsFinite(widthDip) || widthDip <= 0)
             throw new ArgumentOutOfRangeException(nameof(widthDip));
         _autoHide = autoHide;
+        _suppressRevealWhenFullscreen = suppressRevealWhenFullscreen;
+        _keepPinnedBelowWindows = keepPinnedBelowWindows;
+        _fullscreen = false;
+        _lastFullscreenCheck = 0;
         _hideDelayMs = Math.Clamp(hideDelayMs, 100, 30_000);
         _revealDelayMs = Math.Clamp(revealDelayMs, 0, 5_000);
         _widthDip = Math.Clamp(widthDip, 72, 320);
@@ -428,12 +436,14 @@ public sealed class EdgeController : IDisposable
         if (now - _lastPlacementCheck >= 500) RefreshPlacement();
         bool hasCursor = NativeMethods.GetCursorPos(out var cursor);
         bool busy = _isInteractionBusy();
-        if (_autoHide && !_quickMode && !_keyboardHold && !busy && now - _lastFullscreenCheck >= 250)
+        if (_autoHide && _suppressRevealWhenFullscreen && !_quickMode && !_keyboardHold && !busy
+            && now - _lastFullscreenCheck >= 250)
         {
             _lastFullscreenCheck = now;
-            _fullscreen = IsForegroundFullscreen();
+            _fullscreen = IsForegroundMaximizedOrFullscreen();
         }
-        UpdatePointerInteractions(hasCursor ? cursor : null, busy || _quickMode || _keyboardHold || (_autoHide && _fullscreen));
+        bool suppressEdgeReveal = _autoHide && _suppressRevealWhenFullscreen && _fullscreen;
+        UpdatePointerInteractions(hasCursor ? cursor : null, busy || _quickMode || _keyboardHold || suppressEdgeReveal);
         if (_quickMode || _keyboardHold)
         {
             _outsideSince = null;
@@ -448,7 +458,7 @@ public sealed class EdgeController : IDisposable
             if (!IsRevealed) Reveal();
             return;
         }
-        if (_fullscreen)
+        if (suppressEdgeReveal)
         {
             _hoverSince = null;
             if (IsRevealed) SetRevealed(false);
@@ -540,10 +550,16 @@ public sealed class EdgeController : IDisposable
         // detection uses screen coordinates and keeps working while HWND-hidden.
         uint flags = NativeMethods.SwpNoActivate | (empty ? NativeMethods.SwpHideWindow : NativeMethods.SwpShowWindow);
         if (frameChanged) flags |= NativeMethods.SwpFrameChanged;
+        // Fixed docks use normal window stacking. Demote only when the policy
+        // changes: repeating HWND_NOTOPMOST would raise them above other apps.
+        bool topmost = _autoHide || !_keepPinnedBelowWindows;
+        if (_appliedTopmost == topmost) flags |= NativeMethods.SwpNoZOrder;
+        nint insertAfter = topmost ? NativeMethods.HwndTopmost : NativeMethods.HwndNotTopmost;
         // The entire HWND moves without activating; its region also clips any
         // adjacent monitor. Keep its full size and height throughout the glide.
-        if (!NativeMethods.SetWindowPos(_hwnd, NativeMethods.HwndTopmost, window.Left, window.Top, window.Width, window.Height, flags))
+        if (!NativeMethods.SetWindowPos(_hwnd, insertAfter, window.Left, window.Top, window.Width, window.Height, flags))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot position the edge dock.");
+        _appliedTopmost = topmost;
     }
 
     private void ApplyWindowRegion(PixelRect viewport, PixelRect window, bool redraw)
@@ -599,15 +615,22 @@ public sealed class EdgeController : IDisposable
         _timerIntervalMs = intervalMs;
     }
 
-    private bool IsForegroundFullscreen()
+    private bool IsForegroundMaximizedOrFullscreen()
     {
         var foreground = NativeMethods.GetForegroundWindow();
         if (foreground == 0 || NativeMethods.IsIconic(foreground)) return false;
         NativeMethods.GetWindowThreadProcessId(foreground, out uint processId);
         if (processId == (uint)Environment.ProcessId) return false;
         if (WindowClassReader.Read(foreground) != BackgroundWindowKind.Other) return false;
-        if (NativeMethods.MonitorFromWindow(foreground, NativeMethods.MonitorDefaultToPrimary) != _monitor
-            || !NativeMethods.GetWindowRect(foreground, out var rect)) return false;
+        if (NativeMethods.MonitorFromWindow(foreground, NativeMethods.MonitorDefaultToPrimary) != _monitor) return false;
+        // Maximized apps occupy their monitor's workspace and should block
+        // pointer reveal there, even when the Windows taskbar remains visible.
+        if (NativeMethods.IsZoomed(foreground)) return true;
+        // DWM excludes invisible resize borders; GetWindowRect alone can make a
+        // regular window appear to cover the complete monitor.
+        if (NativeMethods.DwmGetWindowAttribute(foreground, NativeMethods.DwmwaExtendedFrameBounds,
+                out var rect, Marshal.SizeOf<NativeMethods.Rect>()) != 0
+            && !NativeMethods.GetWindowRect(foreground, out rect)) return false;
         return rect.Left <= _monitorBounds.Left && rect.Top <= _monitorBounds.Top
             && rect.Right >= _monitorBounds.Right && rect.Bottom >= _monitorBounds.Bottom;
     }

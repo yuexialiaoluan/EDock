@@ -4,14 +4,14 @@ Windows 11 左右自动隐藏快捷启动栏。鼠标移到屏幕边缘展开，
 
 ## 下载与运行
 
-在 [0.16.11 发布页](https://github.com/yuexialiaoluan/EDock/releases/tag/v0.16.11) 下载，
+在 [0.16.12 发布页](https://github.com/yuexialiaoluan/EDock/releases/tag/v0.16.12) 下载，
 适用 Windows 11 x64，可选择安装版或免安装便携版。
 
 | 版本 | 文件 | 大小 | 运行环境 |
 | --- | --- | --- | --- |
-| 安装版 | `EDock-0.16.11-setup-win-x64.exe` | 67.95 MiB | 已包含运行依赖，支持覆盖升级 |
-| 便携完整版 | `EDock-0.16.11-portable-win-x64.zip` | 98.69 MiB | 已包含运行依赖，解压运行 |
-| 便携精简版 | `EDock-0.16.11-portable-lite-win-x64.zip` | 11.04 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
+| 安装版 | `EDock-0.16.12-setup-win-x64.exe` | 67.95 MiB | 已包含运行依赖，支持覆盖升级 |
+| 便携完整版 | `EDock-0.16.12-portable-win-x64.zip` | 98.69 MiB | 已包含运行依赖，解压运行 |
+| 便携精简版 | `EDock-0.16.12-portable-lite-win-x64.zip` | 15.48 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
 
 三个版本功能相同。便携精简版所需环境可从微软下载：
 [.NET 8 x64 Runtime](https://aka.ms/dotnet/8.0/dotnet-runtime-win-x64.exe)、
@@ -24,6 +24,7 @@ Windows 不一定自带这些环境；已安装其他主版本也不能直接替
 ## 功能
 
 - 左右边栏可统一或独立设置；自动隐藏、固定、展开和多列表。
+- 默认在同屏其他应用最大化或全屏时暂停触边呼出；固定边栏默认不置顶，两项均可在基本设置中分别关闭。
 - 可同时关闭左右边栏，重启后保留；通过系统托盘打开设置即可重新开启。
 - 拖入应用快捷方式、文件、文件夹和网页；排序、内部拖动和桌面快捷方式转移。
 - 经典图标、横向图片、纯文本；调整图标大小、间距、列数和按钮位置。
@@ -124,7 +125,8 @@ dotnet run --project tests/EDock.StartupTests -c Release
 
 ## 兼容性与反馈
 
-当前边栏显示在主显示器两侧，全屏应用会暂停自动呼出。任务栏透明、亚克力和
+当前边栏显示在主显示器两侧，默认在同屏其他应用最大化或全屏时暂停触边呼出。
+固定边栏默认使用普通窗口层级，可被其他应用遮挡；两项均可在基本设置中关闭，支持左右独立设置。任务栏透明、亚克力和
 毛玻璃已在 Windows 11 25H2 的单显示器环境验证，其他系统版本与多显示器环境
 仍需进一步验证。隐藏后的内存占用会随系统和内容变化，没有固定上限；参见
 [内存优化说明](docs/内存优化说明.md)。

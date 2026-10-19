@@ -82,6 +82,7 @@ internal sealed class SettingsEditorDraft
 
     internal static bool SameOptions(DockOptions a, DockOptions b) =>
         a.DockWidth == b.DockWidth && a.AutoHide == b.AutoHide && a.HideDelayMs == b.HideDelayMs
+        && a.SuppressRevealWhenFullscreen == b.SuppressRevealWhenFullscreen && a.KeepPinnedBelowWindows == b.KeepPinnedBelowWindows
         && a.RevealDelayMs == b.RevealDelayMs && a.RevealDurationMs == b.RevealDurationMs
         && a.HideDurationMs == b.HideDurationMs && a.AnimationStyle == b.AnimationStyle
         && a.LoopScrolling == b.LoopScrolling && a.Theme == b.Theme

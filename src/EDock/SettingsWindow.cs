@@ -30,6 +30,8 @@ public sealed class SettingsWindow : Window
     private readonly ToggleSwitch _left;
     private readonly ToggleSwitch _right;
     private readonly ToggleSwitch _autoHide;
+    private readonly ToggleSwitch _suppressRevealWhenFullscreen;
+    private readonly ToggleSwitch _keepPinnedBelowWindows;
     private readonly ToggleSwitch _startup;
     private readonly ToggleSwitch _removeDesktopShortcut;
     private readonly ToggleSwitch _quickMode;
@@ -260,6 +262,11 @@ public sealed class SettingsWindow : Window
         var behavior = AddSection("边栏与自动隐藏", "鼠标靠近屏幕边缘时展开，离开后收回。固定按钮只影响所在的一侧。左右均可关闭，之后可从系统托盘打开设置重新开启。");
         _autoHide = Toggle("自动隐藏", settings.AutoHide);
         behavior.Children.Add(_autoHide);
+        _suppressRevealWhenFullscreen = Toggle("其他应用最大化或全屏时不呼出边栏", settings.SuppressRevealWhenFullscreen);
+        _keepPinnedBelowWindows = Toggle("固定时不置于其他应用上方", settings.KeepPinnedBelowWindows);
+        behavior.Children.Add(_suppressRevealWhenFullscreen);
+        behavior.Children.Add(_keepPinnedBelowWindows);
+        behavior.Children.Add(Help("以上两项默认开启。其他应用最大化或全屏时，暂停鼠标移到屏幕边缘呼出；固定边栏时允许其他应用遮挡，回到桌面仍可使用。关闭相应开关可恢复边缘呼出或固定置顶。"));
         _hideDelay = Number("移开后多久隐藏（毫秒）", settings.HideDelayMs, 100, 5000, 50);
         _revealDelay = Number("在边缘停留多久展开（毫秒）", settings.RevealDelayMs, 0, 2000, 20);
         behavior.Children.Add(Pair(_hideDelay, _revealDelay));
@@ -607,6 +614,8 @@ public sealed class SettingsWindow : Window
     private void CaptureChoiceOptions()
     {
         var options = CurrentDraft;
+        options.SuppressRevealWhenFullscreen = _suppressRevealWhenFullscreen.IsOn;
+        options.KeepPinnedBelowWindows = _keepPinnedBelowWindows.IsOn;
         options.AnimationStyle = _animationStyle.SelectedIndex switch { 1 => "Reveal", 2 => "None", _ => "Slide" };
         options.LoopScrolling = _loopScrolling.IsOn;
         options.ShowShortcutNames = _showNames.IsOn;
@@ -623,6 +632,8 @@ public sealed class SettingsWindow : Window
         try
         {
             _autoHide.IsOn = _draft.DisplayAutoHide(App.Current.Settings); _width.Value = options.DockWidth;
+            _suppressRevealWhenFullscreen.IsOn = options.SuppressRevealWhenFullscreen;
+            _keepPinnedBelowWindows.IsOn = options.KeepPinnedBelowWindows;
             _iconSize.Value = options.IconSize; _iconSpacing.Value = options.IconSpacing;
             _normalColumns.Value = options.NormalColumns; _footerOffset.Value = options.FooterOffset;
             _floatingTopInset.Value = options.FloatingTopInset; _floatingBottomInset.Value = options.FloatingBottomInset;
@@ -854,7 +865,7 @@ public sealed class SettingsWindow : Window
             if (!_loadingOptions && !_closed) _ = RequestSettingsImageValidation(_settingsImagePath.Text);
         };
         _startup.Toggled += (_, _) => StartupChanged();
-        foreach (var toggle in new[] { _showNames, _loopScrolling })
+        foreach (var toggle in new[] { _showNames, _loopScrolling, _suppressRevealWhenFullscreen, _keepPinnedBelowWindows })
             toggle.Toggled += (_, _) => ChoicesChanged();
         foreach (var choice in new[] { _animationStyle, _displayMode, _theme, _frameStyle })
             choice.SelectionChanged += (_, _) => ChoicesChanged();

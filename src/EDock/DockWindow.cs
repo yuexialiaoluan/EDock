@@ -315,7 +315,8 @@ public sealed class DockWindow : Window
     private void ConfigureEdge(DockOptions settings) =>
         _edge.Configure(settings.AutoHide, settings.HideDelayMs, settings.RevealDelayMs, settings.DockWidth,
             settings.RevealDurationMs, settings.HideDurationMs, settings.AnimationStyle, settings.DockFrameStyle,
-            DockLayoutLogic.PreferredWidth(settings), settings.FloatingTopInset, settings.FloatingBottomInset);
+            DockLayoutLogic.PreferredWidth(settings), settings.FloatingTopInset, settings.FloatingBottomInset,
+            settings.SuppressRevealWhenFullscreen, settings.KeepPinnedBelowWindows);
 
     private void ScheduleResourceRelease()
     {

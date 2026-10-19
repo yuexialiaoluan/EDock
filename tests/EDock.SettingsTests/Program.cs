@@ -14,6 +14,75 @@ void Run(string name, Action test)
     catch (Exception ex) { failed++; Console.WriteLine($"FAIL {name}: {ex.Message}"); }
 }
 
+Run("Existing profiles enable window protections without changing saved pin or list preferences", () =>
+{
+    var settings = JsonSerializer.Deserialize<DockSettings>("""
+        {"SeparateSideSettings":true,"LeftSettings":{"DockWidth":112},"RightSettings":{"DockWidth":160},
+         "LeftAutoHideOverride":false,"RightAutoHideOverride":true,"QuickModeEnabled":true,
+         "LeftLists":[{"Id":"keep-left","Name":"保留列表","Items":[]}],"ActiveLeftListId":"keep-left"}
+        """)!;
+    settings.Normalize();
+    foreach (var options in new[] { new DockOptions(), settings, settings.GetSideOptions(DockSide.Left), settings.GetSideOptions(DockSide.Right) })
+        Check(options.SuppressRevealWhenFullscreen && options.KeepPinnedBelowWindows);
+    Check(!settings.GetSideOptions(DockSide.Left).AutoHide && settings.GetSideOptions(DockSide.Right).AutoHide);
+    Check(settings.QuickModeEnabled && settings.GetActiveList(DockSide.Left).Name == "保留列表");
+});
+
+Run("Explicitly disabled window protections survive copy, normalization and JSON reload", () =>
+{
+    var settings = new DockSettings { SuppressRevealWhenFullscreen = false, KeepPinnedBelowWindows = false };
+    settings.Normalize();
+    var copy = settings.Copy();
+    var applied = new DockOptions();
+    applied.CopyFrom(copy);
+    var reloaded = JsonSerializer.Deserialize<DockSettings>(JsonSerializer.Serialize(settings))!;
+    reloaded.Normalize();
+    foreach (var options in new[] { copy, applied, reloaded, reloaded.GetSideOptions(DockSide.Left), reloaded.GetSideOptions(DockSide.Right) })
+        Check(!options.SuppressRevealWhenFullscreen && !options.KeepPinnedBelowWindows);
+});
+
+Run("Window protection previews route to the selected side and preserve live pin overrides", () =>
+{
+    var settings = new DockSettings { LeftAutoHideOverride = false, RightAutoHideOverride = true };
+    var draft = new SettingsEditorDraft(settings, DockSide.Right);
+    draft.SetSeparate(true);
+    draft.Current.SuppressRevealWhenFullscreen = false;
+    Check(!draft.Matches(settings));
+    draft.ApplyTo(settings);
+    draft.AcceptApplied();
+    Check(draft.Matches(settings));
+    Check(settings.GetSideOptions(DockSide.Left).SuppressRevealWhenFullscreen);
+    Check(!settings.GetSideOptions(DockSide.Right).SuppressRevealWhenFullscreen);
+    draft.SelectSide(DockSide.Left);
+    draft.Current.KeepPinnedBelowWindows = false;
+    Check(!draft.Matches(settings));
+    draft.ApplyTo(settings);
+    Check(!settings.GetSideOptions(DockSide.Left).KeepPinnedBelowWindows);
+    Check(settings.GetSideOptions(DockSide.Right).KeepPinnedBelowWindows);
+    Check(settings.LeftAutoHideOverride == false && settings.RightAutoHideOverride == true);
+    var reloaded = JsonSerializer.Deserialize<DockSettings>(JsonSerializer.Serialize(settings))!;
+    reloaded.Normalize();
+    Check(reloaded.GetSideOptions(DockSide.Left).SuppressRevealWhenFullscreen && !reloaded.GetSideOptions(DockSide.Right).SuppressRevealWhenFullscreen);
+    Check(!reloaded.GetSideOptions(DockSide.Left).KeepPinnedBelowWindows && reloaded.GetSideOptions(DockSide.Right).KeepPinnedBelowWindows);
+});
+
+Run("Unified window protections survive switching back to saved independent choices", () =>
+{
+    var settings = new DockSettings();
+    var draft = new SettingsEditorDraft(settings);
+    draft.Shared.SuppressRevealWhenFullscreen = false;
+    draft.Shared.KeepPinnedBelowWindows = false;
+    draft.SetSeparate(true);
+    Check(!draft.Left.SuppressRevealWhenFullscreen && !draft.Right.KeepPinnedBelowWindows);
+    draft.Right.SuppressRevealWhenFullscreen = true;
+    draft.SetSeparate(false);
+    draft.ApplyTo(settings);
+    Check(!settings.GetSideOptions(DockSide.Left).SuppressRevealWhenFullscreen && !settings.GetSideOptions(DockSide.Right).SuppressRevealWhenFullscreen);
+    draft.SetSeparate(true);
+    draft.ApplyTo(settings);
+    Check(!settings.GetSideOptions(DockSide.Left).SuppressRevealWhenFullscreen && settings.GetSideOptions(DockSide.Right).SuppressRevealWhenFullscreen);
+});
+
 Run("Opening the right dock preserves unified mode", () =>
 {
     var settings = new DockSettings { DockWidth = 104 };

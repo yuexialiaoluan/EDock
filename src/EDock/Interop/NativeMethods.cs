@@ -53,11 +53,13 @@ internal static class NativeMethods
     internal const uint GuiInteractionModes = 0x0002 | 0x0004 | 0x0008 | 0x0010;
     internal const int RgnAnd = 1;
     internal const int RgnError = 0;
+    internal const int DwmwaExtendedFrameBounds = 9;
     internal const int DwmwaWindowCornerPreference = 33;
     internal const int DwmwcpDoNotRound = 1;
     internal const int DwmwaBorderColor = 34;
     internal const int DwmwaColorNone = unchecked((int)0xFFFFFFFE);
     internal static readonly nint HwndTopmost = new(-1);
+    internal static readonly nint HwndNotTopmost = new(-2);
 
     internal delegate nint KeyboardHookProc(int code, nint message, nint data);
     internal delegate nint MouseHookProc(int code, nint message, nint data);
@@ -182,6 +184,10 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsZoomed(nint hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsWindowEnabled(nint hwnd);
 
     [DllImport("user32.dll")]
@@ -264,4 +270,7 @@ internal static class NativeMethods
 
     [DllImport("dwmapi.dll")]
     internal static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int size);
+
+    [DllImport("dwmapi.dll")]
+    internal static extern int DwmGetWindowAttribute(nint hwnd, int attribute, out Rect value, int size);
 }

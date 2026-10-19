@@ -5,6 +5,8 @@ public class DockOptions
 {
     public double DockWidth { get; set; } = 88;
     public bool AutoHide { get; set; } = true;
+    public bool SuppressRevealWhenFullscreen { get; set; } = true;
+    public bool KeepPinnedBelowWindows { get; set; } = true;
     public int HideDelayMs { get; set; } = 650;
     public int RevealDelayMs { get; set; } = 120;
     public int RevealDurationMs { get; set; } = 250;
@@ -30,6 +32,7 @@ public class DockOptions
     public DockOptions Copy() => new()
     {
         DockWidth = DockWidth, AutoHide = AutoHide, HideDelayMs = HideDelayMs, RevealDelayMs = RevealDelayMs,
+        SuppressRevealWhenFullscreen = SuppressRevealWhenFullscreen, KeepPinnedBelowWindows = KeepPinnedBelowWindows,
         RevealDurationMs = RevealDurationMs, HideDurationMs = HideDurationMs, AnimationStyle = AnimationStyle, LoopScrolling = LoopScrolling,
         Theme = Theme, ShowShortcutNames = ShowShortcutNames, HeaderText = HeaderText, ShortcutDisplayMode = ShortcutDisplayMode, DockFrameStyle = DockFrameStyle,
         IconSize = IconSize, IconSpacing = IconSpacing, NormalColumns = NormalColumns, FooterOffset = FooterOffset,
@@ -41,6 +44,7 @@ public class DockOptions
     public void CopyFrom(DockOptions source)
     {
         DockWidth = source.DockWidth; AutoHide = source.AutoHide; HideDelayMs = source.HideDelayMs; RevealDelayMs = source.RevealDelayMs;
+        SuppressRevealWhenFullscreen = source.SuppressRevealWhenFullscreen; KeepPinnedBelowWindows = source.KeepPinnedBelowWindows;
         RevealDurationMs = source.RevealDurationMs; HideDurationMs = source.HideDurationMs; AnimationStyle = source.AnimationStyle; LoopScrolling = source.LoopScrolling;
         Theme = source.Theme; ShowShortcutNames = source.ShowShortcutNames; HeaderText = source.HeaderText; ShortcutDisplayMode = source.ShortcutDisplayMode; DockFrameStyle = source.DockFrameStyle;
         IconSize = source.IconSize; IconSpacing = source.IconSpacing; NormalColumns = source.NormalColumns; FooterOffset = source.FooterOffset;
