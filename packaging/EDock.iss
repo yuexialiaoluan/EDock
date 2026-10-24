@@ -7,8 +7,8 @@
   #error OutputDirectory must name the installer output directory.
 #endif
 #define AppVersion GetStringFileInfo(PublishDirectory + "\EDock.exe", "ProductVersion")
-#define NativeHelper "EDock.Taskbar.0.14.3.dll"
-#define NativeSHA256 "381dc6a0a87c69fb4303572af0e517ba05d6422ab0daa205b73ca1268173e801"
+#define NativeHelper "EDock.Taskbar.0.14.5.dll"
+#define NativeSHA256 "dda83cae80e3af91a21af47a087247a47c369585ff39236e49758b664b90be4d"
 #define UserProfilePath "{localappdata}\EDock"
 #define UserBackupPath "{localappdata}\EDock-backups"
 

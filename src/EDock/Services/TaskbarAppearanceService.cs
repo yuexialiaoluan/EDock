@@ -13,12 +13,12 @@ namespace EDock.Services;
 /// </summary>
 public sealed class TaskbarAppearanceService : IDisposable
 {
-    private const string ChannelName = "Local\\EDock.TaskbarAppearance.v7";
-    private const string WindowClass = "EDock.TaskbarAppearance.v7";
+    private const string ChannelName = "Local\\EDock.TaskbarAppearance.v8";
+    private const string WindowClass = "EDock.TaskbarAppearance.v8";
     private const uint ApplyMessage = 0x8051;
-    private const string HelperName = "EDock.Taskbar.0.14.3.dll";
+    private const string HelperName = "EDock.Taskbar.0.14.5.dll";
     private const int Magic = 0x45445442;
-    private static readonly Guid DiagnosticsClass = new("5ede36d4-6324-476b-b183-2976362e5297");
+    private static readonly Guid DiagnosticsClass = new("5ede36d4-6324-476b-b183-2976362e5299");
     private readonly DispatcherQueue _dispatcher;
     private readonly DispatcherQueueTimer _checkTimer;
     private MemoryMappedFile? _mapping;

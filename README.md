@@ -1,17 +1,22 @@
-# EDock
+# EDock 0.16.13
 
 Windows 11 左右自动隐藏快捷启动栏。鼠标移到屏幕边缘展开，移开后收回。
 
+## 本次更新
+
+- 修复开启任务栏透明或材质后，旧的 XAML Diagnostics 连接未重新枚举任务栏背景的问题。
+- 更新任务栏组件、诊断连接和共享通道身份，让 Explorer 使用新的视觉树订阅；原有设置默认仍关闭，用户可在设置中启用。
+
 ## 下载与运行
 
-在 [0.16.12 发布页](https://github.com/yuexialiaoluan/EDock/releases/tag/v0.16.12) 下载，
+在 [0.16.13 发布页](https://github.com/yuexialiaoluan/EDock/releases/tag/v0.16.13) 下载，
 适用 Windows 11 x64，可选择安装版或免安装便携版。
 
 | 版本 | 文件 | 大小 | 运行环境 |
 | --- | --- | --- | --- |
-| 安装版 | `EDock-0.16.12-setup-win-x64.exe` | 67.95 MiB | 已包含运行依赖，支持覆盖升级 |
-| 便携完整版 | `EDock-0.16.12-portable-win-x64.zip` | 98.69 MiB | 已包含运行依赖，解压运行 |
-| 便携精简版 | `EDock-0.16.12-portable-lite-win-x64.zip` | 15.48 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
+| 安装版 | `EDock-0.16.13-setup-win-x64.exe` | 68.00 MiB | 已包含运行依赖，支持覆盖升级 |
+| 便携完整版 | `EDock-0.16.13-portable-win-x64.zip` | 98.69 MiB | 已包含运行依赖，解压运行 |
+| 便携精简版 | `EDock-0.16.13-portable-lite-win-x64.zip` | 15.48 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
 
 三个版本功能相同。便携精简版所需环境可从微软下载：
 [.NET 8 x64 Runtime](https://aka.ms/dotnet/8.0/dotnet-runtime-win-x64.exe)、

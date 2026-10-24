@@ -13,8 +13,8 @@
 #include <cstddef>
 
 namespace {
-constexpr wchar_t MappingName[] = L"Local\\EDock.TaskbarAppearance.v7";
-constexpr wchar_t WindowClass[] = L"EDock.TaskbarAppearance.v7";
+constexpr wchar_t MappingName[] = L"Local\\EDock.TaskbarAppearance.v8";
+constexpr wchar_t WindowClass[] = L"EDock.TaskbarAppearance.v8";
 constexpr unsigned Magic = 0x45445442;
 constexpr unsigned ApplyMessage = WM_APP + 81;
 struct SharedState {

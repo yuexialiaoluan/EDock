@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$ZigPath,
-    [string]$Output = (Join-Path $PSScriptRoot 'EDock.Taskbar.0.14.3.dll')
+    [string]$Output = (Join-Path $PSScriptRoot 'EDock.Taskbar.0.14.5.dll')
 )
 $ErrorActionPreference = 'Stop'
 $compiler = (Resolve-Path -LiteralPath $ZigPath).Path

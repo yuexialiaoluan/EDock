@@ -21,8 +21,8 @@ if (@($runtime.runtimeOptions.includedFrameworks | Where-Object { $_.name -eq 'M
 foreach ($name in @('coreclr.dll', 'hostfxr.dll', 'hostpolicy.dll', 'Microsoft.ui.xaml.dll', 'Microsoft.WindowsAppRuntime.dll', 'EDock.pri', 'App.xbf', 'Assets/EDock.ico', 'NativeThirdPartyNotices.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publish $name) -PathType Leaf)) { throw "Missing distribution file: $name" }
 }
-$native = Join-Path $publish 'Native/EDock.Taskbar.0.14.3.dll'
-if ((Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash -ne '381DC6A0A87C69FB4303572AF0E517BA05D6422AB0DAA205B73CA1268173E801') {
+$native = Join-Path $publish 'Native/EDock.Taskbar.0.14.5.dll'
+if ((Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash -ne 'DDA83CAE80E3AF91A21AF47A087247A47C369585FF39236E49758B664B90BE4D') {
     throw 'Native helper changed: review it and give the new helper an immutable versioned filename.'
 }
 if (@(Get-ChildItem -LiteralPath (Join-Path $publish 'Native') -File).Count -ne 1) { throw 'Unexpected Native payload.' }
