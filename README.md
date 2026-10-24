@@ -14,7 +14,7 @@ Windows 11 左右自动隐藏快捷启动栏。鼠标移到屏幕边缘展开，
 
 | 版本 | 文件 | 大小 | 运行环境 |
 | --- | --- | --- | --- |
-| 安装版 | `EDock-0.16.13-setup-win-x64.exe` | 68.00 MiB | 已包含运行依赖，支持覆盖升级 |
+| 安装版 | `EDock-0.16.13-setup-win-x64.exe` | 67.95 MiB | 已包含运行依赖，支持覆盖升级 |
 | 便携完整版 | `EDock-0.16.13-portable-win-x64.zip` | 98.69 MiB | 已包含运行依赖，解压运行 |
 | 便携精简版 | `EDock-0.16.13-portable-lite-win-x64.zip` | 15.48 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
 
