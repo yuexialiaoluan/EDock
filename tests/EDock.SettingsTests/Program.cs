@@ -28,6 +28,22 @@ Run("Existing profiles enable window protections without changing saved pin or l
     Check(settings.QuickModeEnabled && settings.GetActiveList(DockSide.Left).Name == "保留列表");
 });
 
+Run("Shortcut bindings keep defaults, normalize combinations, and report conflicts", () =>
+{
+    var settings = new DockSettings();
+    settings.Normalize();
+    Check(settings.ShortcutBindings[DockShortcutAction.PreviousRow].Key == "W");
+    settings.ShortcutBindings[DockShortcutAction.PreviousRow] = new ShortcutBinding { Key = "q", Modifiers = "Shift+Ctrl" };
+    settings.ShortcutBindings[DockShortcutAction.NextRow] = new ShortcutBinding { Key = "Q", Modifiers = "Ctrl+Shift" };
+    settings.Normalize();
+    Check(settings.ShortcutBindings[DockShortcutAction.PreviousRow].Key == "Q");
+    Check(settings.ShortcutBindings[DockShortcutAction.PreviousRow].Modifiers == "Ctrl+Shift");
+    Check(ShortcutBindingCatalog.FindConflicts(settings.ShortcutBindings).Count == 1);
+    settings.ShortcutBindings[DockShortcutAction.NextRow].Enabled = false;
+    Check(ShortcutBindingCatalog.FindConflicts(settings.ShortcutBindings).Count == 0);
+    Check(ShortcutBindingCatalog.Display(new ShortcutBinding { Enabled = false, Key = "Q" }) == "已关闭");
+});
+
 Run("Explicitly disabled window protections survive copy, normalization and JSON reload", () =>
 {
     var settings = new DockSettings { SuppressRevealWhenFullscreen = false, KeepPinnedBelowWindows = false };
@@ -252,6 +268,131 @@ Run("Taskbar appearance is global, opt in, and repairs invalid opacity", () =>
     draft.ApplyTo(settings);
     Check(settings.TaskbarTransparencyEnabled && settings.TaskbarOpacity == .4);
     Check(typeof(DockOptions).GetProperty(nameof(DockSettings.TaskbarTransparencyEnabled)) is null);
+});
+
+Run("Start menu appearance is opt in for new and existing profiles", () =>
+{
+    foreach (var settings in new[] { new DockSettings(), JsonSerializer.Deserialize<DockSettings>("""
+        {"TaskbarTransparencyEnabled":true,"TaskbarOpacity":0.35,"DockWidth":136,
+         "LeftLists":[{"Id":"keep-list","Name":"保留列表","Shortcuts":[{"Id":"keep-item","Name":"保留图标","TargetPath":"app.exe"}]}],
+         "ActiveLeftListId":"keep-list"}
+        """)! })
+    {
+        settings.Normalize();
+        Check(!settings.StartMenuTransparencyEnabled && settings.StartMenuOpacity == 0);
+    }
+    var old = JsonSerializer.Deserialize<DockSettings>("""
+        {"TaskbarTransparencyEnabled":true,"TaskbarOpacity":0.35,"DockWidth":136,
+         "LeftLists":[{"Id":"keep-list","Name":"保留列表","Shortcuts":[{"Id":"keep-item","Name":"保留图标","TargetPath":"app.exe"}]}],
+         "ActiveLeftListId":"keep-list"}
+        """)!;
+    old.Normalize();
+    Check(old.TaskbarTransparencyEnabled && old.TaskbarOpacity == .35 && old.DockWidth == 136);
+    Check(old.GetActiveList(DockSide.Left).Id == "keep-list" && old.LeftShortcuts.Single().Id == "keep-item");
+});
+
+Run("Start menu opacity repairs nonfinite and out of range values", () =>
+{
+    var settings = new DockSettings { StartMenuTransparencyEnabled = true };
+    foreach (var sample in new[] { (double.NaN, 0d), (double.PositiveInfinity, 0d),
+        (double.NegativeInfinity, 0d), (-.5, 0d), (2d, 1d), (0d, 0d), (1d, 1d), (.4, .4) })
+    {
+        settings.StartMenuOpacity = sample.Item1;
+        settings.Normalize();
+        Check(settings.StartMenuTransparencyEnabled && settings.StartMenuOpacity == sample.Item2);
+    }
+});
+
+Run("Start menu appearance persists independently and survives dock previews", () =>
+{
+    var settings = new DockSettings { StartMenuTransparencyEnabled = true, StartMenuOpacity = .42,
+        TaskbarTransparencyEnabled = false, TaskbarOpacity = .18 };
+    settings.Normalize();
+    var draft = new SettingsEditorDraft(settings, DockSide.Right);
+    draft.SetSeparate(true);
+    draft.Right.IconSize = 64;
+    draft.ApplyTo(settings);
+    draft.SetSeparate(false);
+    draft.ApplyTo(settings);
+    var reloaded = JsonSerializer.Deserialize<DockSettings>(JsonSerializer.Serialize(settings))!;
+    reloaded.Normalize();
+    Check(reloaded.StartMenuTransparencyEnabled && reloaded.StartMenuOpacity == .42);
+    Check(!reloaded.TaskbarTransparencyEnabled && reloaded.TaskbarOpacity == .18);
+    Check(typeof(DockOptions).GetProperty(nameof(DockSettings.StartMenuTransparencyEnabled)) is null);
+    settings.StartMenuTransparencyEnabled = false;
+    reloaded = JsonSerializer.Deserialize<DockSettings>(JsonSerializer.Serialize(settings))!;
+    reloaded.Normalize();
+    Check(!reloaded.StartMenuTransparencyEnabled && reloaded.StartMenuOpacity == .42);
+});
+
+Run("Start button replacement is opt in and does not change existing appearance or lists", () =>
+{
+    foreach (var settings in new[] { new DockSettings(), JsonSerializer.Deserialize<DockSettings>("""
+        {"TaskbarTransparencyEnabled":true,"TaskbarOpacity":0.35,"StartMenuTransparencyEnabled":true,"StartMenuOpacity":0.1,
+         "LeftLists":[{"Id":"keep-list","Name":"保留列表","Shortcuts":[{"Id":"keep-item","Name":"保留图标","TargetPath":"app.exe"}]}],
+         "ActiveLeftListId":"keep-list"}
+        """)! })
+    {
+        settings.Normalize();
+        Check(!settings.StartButtonReplacementEnabled && settings.StartButtonIconSize == 32);
+        Check(settings.StartButtonImagePath == "" && settings.StartButtonHoverImagePath == "" && settings.StartButtonPressedImagePath == "" && settings.StartButtonActivatedImagePath == "");
+        var reloaded = JsonSerializer.Deserialize<DockSettings>(JsonSerializer.Serialize(settings))!;
+        reloaded.Normalize();
+        Check(reloaded.TaskbarTransparencyEnabled == settings.TaskbarTransparencyEnabled && reloaded.TaskbarOpacity == settings.TaskbarOpacity);
+        Check(reloaded.StartMenuTransparencyEnabled == settings.StartMenuTransparencyEnabled && reloaded.StartMenuOpacity == settings.StartMenuOpacity);
+        Check(reloaded.GetActiveList(DockSide.Left).Id == settings.GetActiveList(DockSide.Left).Id);
+        Check(reloaded.LeftShortcuts.Select(item => item.Id).SequenceEqual(settings.LeftShortcuts.Select(item => item.Id)));
+    }
+    var threeStateSettings = JsonSerializer.Deserialize<DockSettings>("""
+        {"StartButtonReplacementEnabled":true,"StartButtonImagePath":"normal.png","StartButtonHoverImagePath":"hover.gif","StartButtonPressedImagePath":"pressed.jpg"}
+        """)!;
+    threeStateSettings.Normalize();
+    Check(threeStateSettings.StartButtonReplacementEnabled && threeStateSettings.StartButtonImagePath == "normal.png"
+        && threeStateSettings.StartButtonHoverImagePath == "hover.gif" && threeStateSettings.StartButtonPressedImagePath == "pressed.jpg"
+        && threeStateSettings.StartButtonActivatedImagePath == "");
+});
+
+Run("Start button replacement normalizes editable paths and dimensions", () =>
+{
+    var settings = new DockSettings { StartButtonReplacementEnabled = true, StartButtonImagePath = null!,
+        StartButtonHoverImagePath = "  C:\\图标\\hover.gif  ", StartButtonPressedImagePath = null!, StartButtonActivatedImagePath = "  C:\\图标\\active.png  " };
+    foreach (var sample in new[] { (double.NaN, 32d), (double.PositiveInfinity, 32d), (double.NegativeInfinity, 32d),
+        (-10d, 8d), (0d, 8d), (8d, 8d), (32d, 32d), (64d, 64d), (100d, 64d) })
+    {
+        settings.StartButtonIconSize = sample.Item1;
+        settings.Normalize();
+        Check(settings.StartButtonIconSize == sample.Item2 && settings.StartButtonReplacementEnabled);
+        Check(settings.StartButtonImagePath == "" && settings.StartButtonHoverImagePath == "C:\\图标\\hover.gif" && settings.StartButtonPressedImagePath == "");
+        Check(settings.StartButtonActivatedImagePath == "C:\\图标\\active.png");
+    }
+    settings.StartButtonActivatedImagePath = null!;
+    settings.Normalize();
+    Check(settings.StartButtonActivatedImagePath == "");
+});
+
+Run("Start button replacement persists independently through side previews and disabling", () =>
+{
+    var settings = new DockSettings { StartButtonReplacementEnabled = true, StartButtonIconSize = 44,
+        StartButtonImagePath = "C:\\图片\\normal.png", StartButtonHoverImagePath = "C:\\图片\\hover.gif", StartButtonPressedImagePath = "C:\\图片\\pressed.jpg",
+        StartButtonActivatedImagePath = "C:\\图片\\active.png",
+        StartMenuTransparencyEnabled = true, StartMenuOpacity = .42, TaskbarTransparencyEnabled = true, TaskbarOpacity = .18 };
+    settings.Normalize();
+    var draft = new SettingsEditorDraft(settings, DockSide.Right);
+    draft.SetSeparate(true);
+    draft.Right.IconSize = 64;
+    draft.ApplyTo(settings);
+    draft.SetSeparate(false);
+    draft.ApplyTo(settings);
+    settings.StartButtonReplacementEnabled = false;
+    var copy = JsonSerializer.Deserialize<DockSettings>(JsonSerializer.Serialize(settings))!;
+    copy.Normalize();
+    Check(!copy.StartButtonReplacementEnabled && copy.StartButtonIconSize == 44);
+    Check(copy.StartButtonImagePath == settings.StartButtonImagePath && copy.StartButtonHoverImagePath == settings.StartButtonHoverImagePath
+        && copy.StartButtonPressedImagePath == settings.StartButtonPressedImagePath && copy.StartButtonActivatedImagePath == settings.StartButtonActivatedImagePath);
+    Check(copy.StartMenuTransparencyEnabled && copy.StartMenuOpacity == .42 && copy.TaskbarTransparencyEnabled && copy.TaskbarOpacity == .18);
+    foreach (string property in new[] { nameof(DockSettings.StartButtonReplacementEnabled), nameof(DockSettings.StartButtonImagePath),
+        nameof(DockSettings.StartButtonHoverImagePath), nameof(DockSettings.StartButtonPressedImagePath), nameof(DockSettings.StartButtonActivatedImagePath), nameof(DockSettings.StartButtonIconSize) })
+        Check(typeof(DockOptions).GetProperty(property) is null);
 });
 
 Run("Older JSON keeps its dock appearance and receives safe new global defaults", () =>
@@ -485,16 +626,141 @@ Run("Preview equality covers every appearance property", () =>
 {
     foreach (var property in typeof(DockOptions).GetProperties())
     {
-        var original = new DockOptions();
+        var original = new DockOptions { MonitorDeviceName = @"\\.\DISPLAY1" };
         var changed = original.Copy();
         object value = property.PropertyType == typeof(bool) ? !(bool)property.GetValue(original)!
             : property.PropertyType == typeof(int) ? (int)property.GetValue(original)! + 1
             : property.PropertyType == typeof(double) ? (double)property.GetValue(original)! + 1
-            : (string)property.GetValue(original)! + "_changed";
+            : property.Name == "MonitorDeviceName" ? @"\\.\DISPLAY2" : (string)property.GetValue(original)! + "_changed";
         property.SetValue(changed, value);
         Check(!SettingsEditorDraft.SameOptions(original, changed), property.Name);
         Check(SettingsEditorDraft.SameOptions(changed, changed.Copy()), property.Name + " copy");
     }
+});
+
+Run("Modifier aliases display once without changing their source binding", () =>
+{
+    foreach (string alias in new[] { "Control", "LeftControl", "RightCtrl", "Ctrl+Control", "Ctrl+Ctrl" })
+    {
+        var source = new ShortcutBinding { Key = alias, Modifiers = "Control+Ctrl" };
+        Check(QuickModeActivation.Display(source) == "Ctrl", alias);
+        var normalized = ShortcutBindingCatalog.NormalizeBinding(source);
+        Check(normalized.Key == "Ctrl" && normalized.Modifiers == "" && normalized.Enabled);
+        Check(source.Key == alias && source.Modifiers == "Control+Ctrl", "Display mutated source");
+    }
+    var withExtraModifier = new ShortcutBinding { Key = "Control", Modifiers = "Ctrl+Alt+Shift" };
+    Check(ShortcutBindingCatalog.DisplayKey(withExtraModifier) == "Shift+Alt+Ctrl");
+    Check(ShortcutBindingCatalog.SameBinding(new() { Key = "i", Modifiers = "Shift+Control" }, new() { Key = "I", Modifiers = "Ctrl+Shift" }));
+});
+
+Run("All captured keyboard families resolve to canonical virtual keys", () =>
+{
+    foreach (var sample in new[]
+    {
+        ("i", "I", 0x49), ("Number1", "1", 0x31), ("D9", "9", 0x39), ("NumPad2", "NumPad2", 0x62),
+        ("Left", "Left", 0x25), ("Prior", "PageUp", 0x21), ("F24", "F24", 0x87), ("OemPlus", "=", 0xBB),
+        ("OemComma", ",", 0xBC), ("OemQuotes", "'", 0xDE), ("LeftWindows", "Win", 0x5B), ("RightMenu", "Alt", 0x12)
+    })
+    {
+        Check(ShortcutBindingCatalog.NormalizeKey(sample.Item1) == sample.Item2, sample.Item1);
+        Check(ShortcutBindingCatalog.VirtualKeyCode(sample.Item1) == sample.Item3, sample.Item1 + " virtual key");
+        Check(ShortcutBindingCatalog.NormalizeBinding(new() { Key = sample.Item1 }).Enabled);
+    }
+    foreach (string invalid in new[] { "", "已关闭", "NotAKey", "NumPadX", "F25" })
+        Check(!ShortcutBindingCatalog.NormalizeBinding(new() { Key = invalid }).Enabled, invalid);
+});
+
+Run("Conflict checking includes activation and neither fills nor mutates the caller dictionary", () =>
+{
+    var bindings = new Dictionary<DockShortcutAction, ShortcutBinding>
+    {
+        [DockShortcutAction.ActivateQuickMode] = new() { Key = "LeftControl", Modifiers = "Ctrl" },
+        [DockShortcutAction.PreviousRow] = new() { Key = "Control" },
+        [DockShortcutAction.NextRow] = new() { Key = "W", Enabled = false }
+    };
+    string before = JsonSerializer.Serialize(bindings);
+    var conflicts = ShortcutBindingCatalog.FindConflicts(bindings);
+    Check(conflicts.Count == 1 && conflicts[0].Contains("呼出") && conflicts[0].Contains("上移"));
+    Check(JsonSerializer.Serialize(bindings) == before && bindings.Count == 3);
+    bindings[DockShortcutAction.PreviousRow].Enabled = false;
+    Check(ShortcutBindingCatalog.FindConflicts(bindings).Count == 0);
+    Check(ShortcutBindingCatalog.FindConflicts(new Dictionary<DockShortcutAction, ShortcutBinding>()).Count == 0);
+});
+
+Run("Disabled shortcuts retain their binding through draft application and JSON reload", () =>
+{
+    var settings = new DockSettings();
+    var draft = new SettingsEditorDraft(settings);
+    draft.SetShortcutBinding(DockShortcutAction.NextList, new() { Key = "i", Modifiers = "Control+Shift", Enabled = false });
+    draft.SetShortcutBinding(DockShortcutAction.ActivateQuickMode, new() { Key = "Alt", Enabled = false });
+    draft.ApplyTo(settings);
+    settings.Normalize();
+    var reloaded = JsonSerializer.Deserialize<DockSettings>(JsonSerializer.Serialize(settings))!;
+    reloaded.Normalize();
+    var binding = reloaded.ShortcutBindings[DockShortcutAction.NextList];
+    Check(!binding.Enabled && binding.Key == "I" && binding.Modifiers == "Ctrl+Shift");
+    Check(ShortcutBindingCatalog.Display(binding) == "已关闭" && ShortcutBindingCatalog.DisplayKey(binding) == "Ctrl+Shift+I");
+    Check(!reloaded.QuickModeActivation.Enabled && reloaded.QuickModeActivation.Key == "Alt");
+    Check(ReferenceEquals(reloaded.QuickModeActivation, reloaded.ShortcutBindings[DockShortcutAction.ActivateQuickMode]));
+    binding.Enabled = true;
+    Check(ShortcutBindingCatalog.Display(binding) == "Ctrl+Shift+I");
+});
+
+Run("Legacy and dictionary activation migrate independently of JSON property order", () =>
+{
+    const string legacy = "\"QuickModeActivation\":{\"Key\":\"I\",\"Modifiers\":\"Control\"}";
+    foreach (string entry in new[] { "", "\"ActivateQuickMode\":{\"Key\":\"Control\"}," })
+    {
+        string dictionary = "\"ShortcutBindings\":{" + entry + "\"NextList\":{\"Key\":\"P\"}}";
+        foreach (string json in new[] { "{" + legacy + "," + dictionary + "}", "{" + dictionary + "," + legacy + "}" })
+        {
+            var settings = JsonSerializer.Deserialize<DockSettings>(json)!;
+            settings.Normalize();
+            Check(settings.QuickModeActivation.Key == "I" && settings.QuickModeActivation.Modifiers == "Ctrl", json);
+            Check(settings.ShortcutBindings[DockShortcutAction.ActivateQuickMode].Key == "I");
+            Check(settings.ShortcutBindings[DockShortcutAction.NextList].Key == "P");
+        }
+    }
+    const string customDictionary = "\"ShortcutBindings\":{\"ActivateQuickMode\":{\"Key\":\"J\"}}";
+    foreach (string json in new[] { "{" + legacy + "," + customDictionary + "}", "{" + customDictionary + "," + legacy + "}" })
+    {
+        var settings = JsonSerializer.Deserialize<DockSettings>(json)!;
+        settings.Normalize();
+        Check(settings.QuickModeActivation.Key == "J", "Canonical custom entry must win");
+    }
+});
+
+Run("Shortcut drafts can be abandoned and cannot normalize or alias live activation", () =>
+{
+    var settings = new DockSettings { QuickModeActivation = new() { Key = "Control", Modifiers = "Control" } };
+    settings.Normalize();
+    string before = JsonSerializer.Serialize(settings);
+    var abandoned = new SettingsEditorDraft(settings);
+    abandoned.QuickModeActivation.Key = "I";
+    abandoned.QuickModeActivation.Modifiers = "Alt";
+    abandoned.SetShortcutBinding(DockShortcutAction.NextRow, new() { Key = "J" });
+    Check(!abandoned.Matches(settings));
+    Check(JsonSerializer.Serialize(settings) == before);
+    var draft = new SettingsEditorDraft(settings);
+    draft.SetShortcutBinding(DockShortcutAction.ActivateQuickMode, new() { Key = "K", Modifiers = "Shift" });
+    Check(draft.QuickModeActivation.Key == "K" && !draft.Matches(settings));
+    draft.ApplyTo(settings);
+    Check(draft.Matches(settings) && settings.QuickModeActivation.Key == "K");
+    draft.QuickModeActivation.Key = "L";
+    Check(settings.QuickModeActivation.Key == "K", "Applied draft must not alias live settings");
+    draft.SetQuickModeActivation(new() { Key = "M" });
+    Check(draft.ShortcutBindings[DockShortcutAction.ActivateQuickMode].Key == "M");
+});
+
+Run("Replacing shortcut bindings at runtime honors canonical activation resets", () =>
+{
+    var settings = new DockSettings { QuickModeActivation = new() { Key = "I" } };
+    settings.ShortcutBindings = ShortcutBindingCatalog.CreateDefaults();
+    Check(settings.QuickModeActivation.Key == "Ctrl");
+    settings.QuickModeActivation = new() { Key = "J" };
+    Check(settings.ShortcutBindings[DockShortcutAction.ActivateQuickMode].Key == "J");
+    settings.ShortcutBindings[DockShortcutAction.ActivateQuickMode] = new() { Key = "K" };
+    Check(settings.QuickModeActivation.Key == "K");
 });
 
 Console.WriteLine($"{passed} passed, {failed} failed");

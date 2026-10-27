@@ -8,6 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/EDock/Interop/NativeMethods.cs" Link="Interop/NativeMethods.cs" />
     <Compile Include="../../src/EDock/Models/*.cs" Link="Models/%(Filename)%(Extension)" />
     <Compile Include="../../src/EDock/Services/SettingsStore.cs" Link="Services/SettingsStore.cs" />
     <Compile Include="../../src/EDock/Services/ConfigurationDirectoryMigration.cs" Link="Services/ConfigurationDirectoryMigration.cs" />

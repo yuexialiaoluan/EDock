@@ -21,11 +21,45 @@ if (@($runtime.runtimeOptions.includedFrameworks | Where-Object { $_.name -eq 'M
 foreach ($name in @('coreclr.dll', 'hostfxr.dll', 'hostpolicy.dll', 'Microsoft.ui.xaml.dll', 'Microsoft.WindowsAppRuntime.dll', 'EDock.pri', 'App.xbf', 'Assets/EDock.ico', 'NativeThirdPartyNotices.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publish $name) -PathType Leaf)) { throw "Missing distribution file: $name" }
 }
-$native = Join-Path $publish 'Native/EDock.Taskbar.0.14.5.dll'
-if ((Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash -ne 'DDA83CAE80E3AF91A21AF47A087247A47C369585FF39236E49758B664B90BE4D') {
-    throw 'Native helper changed: review it and give the new helper an immutable versioned filename.'
+$nativeDirectory = Join-Path $publish 'Native'
+$nativeHelpers = [ordered]@{
+    'EDock.Taskbar.0.14.5.dll' = 'DDA83CAE80E3AF91A21AF47A087247A47C369585FF39236E49758B664B90BE4D'
+    'EDock.StartMenu.0.16.15.dll' = '2748270C47FCF2C61E2F2E40E066D2186C52FC2C515CDC8BB30A33B44AC8FD5B'
+    'EDock.StartButton.0.16.18.1.dll' = 'BCC3F35BD07F6B4912348D0B60664CD9A352DD99FB9A8C79F810CDA2ACD5CEC8'
 }
-if (@(Get-ChildItem -LiteralPath (Join-Path $publish 'Native') -File).Count -ne 1) { throw 'Unexpected Native payload.' }
+if (-not (Test-Path -LiteralPath $nativeDirectory -PathType Container)) {
+    throw 'Missing Native directory: the installer requires the taskbar, Start menu and Start button helpers.'
+}
+foreach ($name in $nativeHelpers.Keys) {
+    $native = Join-Path $nativeDirectory $name
+    if (-not (Test-Path -LiteralPath $native -PathType Leaf)) { throw "Missing required Native helper: $name" }
+    if ((Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash -ne $nativeHelpers[$name]) {
+        throw "Native helper checksum mismatch: $name. Restore the verified helper, or review the change and assign a new immutable versioned filename."
+    }
+}
+foreach ($entry in Get-ChildItem -LiteralPath $nativeDirectory -Force) {
+    if ($entry.PSIsContainer -or -not $nativeHelpers.Contains($entry.Name)) {
+        throw "Unexpected Native payload: $($entry.Name). Only the three verified EDock Native helpers are allowed."
+    }
+}
+# Component-based Windows App SDK publishes omit the old AI/ML/Widgets files.
+# Upgrades remove only these exact known program files. Refuse to build if a
+# future release needs one again, before it can delete a required dependency.
+$retiredComponents = Join-Path $PSScriptRoot 'retired-sdk-components.iss'
+foreach ($line in Get-Content -LiteralPath $retiredComponents) {
+    $text = $line.Trim()
+    if (-not $text -or $text.StartsWith(';') -or $text -eq '[InstallDelete]') { continue }
+    if ($text -notmatch '^Type: (files|dirifempty); Name: "\{app\}\\([A-Za-z0-9_.-]+(?:\\[A-Za-z0-9_.-]+)?)"$') {
+        throw "Unsafe retired component cleanup entry: $text"
+    }
+    $relative = $Matches[2]
+    if ($relative -match '(^|\\)\.\.?($|\\)' -or $relative -match '^(Native|Shortcuts|StartButtonImages)(\\|$)') {
+        throw "Unsafe retired component cleanup path: $relative"
+    }
+    if (Test-Path -LiteralPath (Join-Path $publish $relative)) {
+        throw "Retired SDK component is required by this publish: $relative. Remove its cleanup entry before packaging."
+    }
+}
 if (-not $LicenseDirectory) {
     if (Test-Path -LiteralPath (Join-Path $publish 'Licenses') -PathType Container) {
         $LicenseDirectory = Join-Path $publish 'Licenses'

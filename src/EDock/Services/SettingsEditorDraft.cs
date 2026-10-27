@@ -24,6 +24,9 @@ internal sealed class SettingsEditorDraft
         Separate = settings.SeparateSideSettings;
         HasIndependent = Separate || settings.LeftSettings is not null || settings.RightSettings is not null;
         Side = initialSide ?? DockSide.Left;
+        foreach (var action in ShortcutBindingCatalog.Actions)
+            ShortcutBindings[action] = settings.ShortcutBindings.TryGetValue(action, out var binding) ? binding.Copy() : ShortcutBindingCatalog.Default(action);
+        ShortcutBindings[DockShortcutAction.ActivateQuickMode] = EDock.Models.QuickModeActivation.Normalize(settings.QuickModeActivation);
     }
 
     public DockOptions Options(int scope) => scope switch { 1 => Left, 2 => Right, _ => Shared };
@@ -59,6 +62,7 @@ internal sealed class SettingsEditorDraft
     public void ApplyTo(DockSettings settings)
     {
         settings.CopyFrom(Shared);
+        settings.ShortcutBindings = ShortcutBindings.ToDictionary(pair => pair.Key, pair => pair.Value.Copy());
         settings.SeparateSideSettings = Separate;
         if (HasIndependent)
         {
@@ -78,10 +82,22 @@ internal sealed class SettingsEditorDraft
         && (!HasIndependent || settings.LeftSettings is not null && settings.RightSettings is not null
             && SameOptions(Left, settings.LeftSettings) && SameOptions(Right, settings.RightSettings))
         && (!(_autoHideChanged.Contains(0) || _autoHideChanged.Contains(1)) || !settings.LeftAutoHideOverride.HasValue)
-        && (!(_autoHideChanged.Contains(0) || _autoHideChanged.Contains(2)) || !settings.RightAutoHideOverride.HasValue);
+        && (!(_autoHideChanged.Contains(0) || _autoHideChanged.Contains(2)) || !settings.RightAutoHideOverride.HasValue)
+        && ShortcutBindingsEqual(settings.ShortcutBindings);
+
+    public Dictionary<DockShortcutAction, ShortcutBinding> ShortcutBindings { get; } = new();
+    public ShortcutBinding QuickModeActivation => ShortcutBindings[DockShortcutAction.ActivateQuickMode];
+    public void SetShortcutBinding(DockShortcutAction action, ShortcutBinding binding) => ShortcutBindings[action] = ShortcutBindingCatalog.NormalizeBinding(binding);
+    public void SetQuickModeActivation(ShortcutBinding binding) => SetShortcutBinding(DockShortcutAction.ActivateQuickMode, binding);
+    private bool ShortcutBindingsEqual(IDictionary<DockShortcutAction, ShortcutBinding> bindings)
+    {
+        return ShortcutBindingCatalog.Actions.All(action => ShortcutBindingCatalog.SameBinding(ShortcutBindings[action],
+            bindings.TryGetValue(action, out var actual) ? actual : ShortcutBindingCatalog.Default(action)));
+    }
 
     internal static bool SameOptions(DockOptions a, DockOptions b) =>
         a.DockWidth == b.DockWidth && a.AutoHide == b.AutoHide && a.HideDelayMs == b.HideDelayMs
+        && a.MonitorDeviceName == b.MonitorDeviceName
         && a.SuppressRevealWhenFullscreen == b.SuppressRevealWhenFullscreen && a.KeepPinnedBelowWindows == b.KeepPinnedBelowWindows
         && a.RevealDelayMs == b.RevealDelayMs && a.RevealDurationMs == b.RevealDurationMs
         && a.HideDurationMs == b.HideDurationMs && a.AnimationStyle == b.AnimationStyle

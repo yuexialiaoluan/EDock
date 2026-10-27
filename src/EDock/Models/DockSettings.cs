@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace EDock.Models;
 
@@ -9,7 +10,7 @@ public enum DockSide
     Right
 }
 
-public sealed class DockSettings : DockOptions
+public sealed class DockSettings : DockOptions, IJsonOnDeserializing, IJsonOnDeserialized
 {
     public bool LeftEnabled { get; set; } = true;
     public bool RightEnabled { get; set; } = true;
@@ -17,10 +18,62 @@ public sealed class DockSettings : DockOptions
     public bool RemoveDesktopShortcutAfterImport { get; set; }
     public bool QuickModeEnabled { get; set; }
     public string QuickModeSide { get; set; } = "Left";
+    private Dictionary<DockShortcutAction, ShortcutBinding> _shortcutBindings = ShortcutBindingCatalog.CreateDefaults();
+    private ShortcutBinding? _legacyActivation;
+    private ShortcutBinding? _assignedBindingsActivation;
+    private bool _isDeserializing;
+    // Keep the historical JSON property readable while using the same binding as
+    // the ordinary shortcut list. Some previous builds saved a custom activation
+    // only here and an untouched Ctrl entry in ShortcutBindings.
+    public ShortcutBinding QuickModeActivation
+    {
+        get => _shortcutBindings.TryGetValue(DockShortcutAction.ActivateQuickMode, out var binding) && binding is not null
+            ? binding : EDock.Models.QuickModeActivation.Default();
+        set
+        {
+            var normalized = EDock.Models.QuickModeActivation.Normalize(value);
+            if (_isDeserializing) _legacyActivation = normalized.Copy();
+            _shortcutBindings[DockShortcutAction.ActivateQuickMode] = normalized;
+        }
+    }
+    public Dictionary<DockShortcutAction, ShortcutBinding> ShortcutBindings
+    {
+        get => _shortcutBindings;
+        set
+        {
+            _shortcutBindings = value ?? ShortcutBindingCatalog.CreateDefaults();
+            if (_isDeserializing)
+                _assignedBindingsActivation = _shortcutBindings.TryGetValue(DockShortcutAction.ActivateQuickMode, out var configured)
+                    ? configured?.Copy() : null;
+        }
+    }
+    void IJsonOnDeserializing.OnDeserializing() => _isDeserializing = true;
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        // JSON property order must not choose which binding wins. Prefer a
+        // customized dictionary entry, then the historical standalone setting.
+        if (_assignedBindingsActivation is not null &&
+            (!ShortcutBindingCatalog.SameBinding(_assignedBindingsActivation, EDock.Models.QuickModeActivation.Default()) || _legacyActivation is null))
+            _shortcutBindings[DockShortcutAction.ActivateQuickMode] = ShortcutBindingCatalog.NormalizeBinding(_assignedBindingsActivation);
+        else if (_legacyActivation is not null)
+            _shortcutBindings[DockShortcutAction.ActivateQuickMode] = _legacyActivation.Copy();
+        _legacyActivation = null;
+        _assignedBindingsActivation = null;
+        _isDeserializing = false;
+    }
     // Windows has one taskbar appearance for the session, shared by both docks.
     public bool TaskbarTransparencyEnabled { get; set; }
     public double TaskbarOpacity { get; set; }
     public string TaskbarMaterial { get; set; } = "Transparent";
+    // Start menu appearance is global and remains opt in for existing profiles.
+    public bool StartMenuTransparencyEnabled { get; set; }
+    public double StartMenuOpacity { get; set; }
+    public bool StartButtonReplacementEnabled { get; set; }
+    public string StartButtonImagePath { get; set; } = string.Empty;
+    public string StartButtonHoverImagePath { get; set; } = string.Empty;
+    public string StartButtonPressedImagePath { get; set; } = string.Empty;
+    public string StartButtonActivatedImagePath { get; set; } = string.Empty;
+    public double StartButtonIconSize { get; set; } = 32;
     // The settings window has its own global appearance, separate from either dock.
     public string SettingsTheme { get; set; } = "Default";
     public string SettingsBackgroundStyle { get; set; } = "Solid";
@@ -149,7 +202,17 @@ public sealed class DockSettings : DockOptions
     internal void Normalize()
     {
         if (QuickModeSide is not ("Left" or "Right" or "Both")) QuickModeSide = "Left";
+        ShortcutBindings ??= ShortcutBindingCatalog.CreateDefaults();
+        ShortcutBindingCatalog.Normalize(ShortcutBindings);
+        _legacyActivation = null;
+        _assignedBindingsActivation = null;
         TaskbarOpacity = double.IsFinite(TaskbarOpacity) ? Math.Clamp(TaskbarOpacity, 0, 1) : 0;
+        StartMenuOpacity = double.IsFinite(StartMenuOpacity) ? Math.Clamp(StartMenuOpacity, 0, 1) : 0;
+        StartButtonImagePath = (StartButtonImagePath ?? string.Empty).Trim();
+        StartButtonHoverImagePath = (StartButtonHoverImagePath ?? string.Empty).Trim();
+        StartButtonPressedImagePath = (StartButtonPressedImagePath ?? string.Empty).Trim();
+        StartButtonActivatedImagePath = (StartButtonActivatedImagePath ?? string.Empty).Trim();
+        StartButtonIconSize = double.IsFinite(StartButtonIconSize) ? Math.Clamp(StartButtonIconSize, 8, 64) : 32;
         if (TaskbarMaterial is not ("Transparent" or "Acrylic" or "Blur")) TaskbarMaterial = "Transparent";
         if (SettingsTheme is not ("Default" or "Light" or "Dark")) SettingsTheme = "Default";
         if (SettingsContentOverlayTheme is not ("Default" or "Light" or "Dark")) SettingsContentOverlayTheme = "Default";

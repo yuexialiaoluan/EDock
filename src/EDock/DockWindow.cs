@@ -58,7 +58,10 @@ public sealed class DockWindow : Window
     private readonly ScrollViewer _scroll;
     private readonly DispatcherQueueTimer _scrollTimer;
     private readonly DispatcherQueueTimer _resourceReleaseTimer;
-    private bool _resourcesSuspended;
+    // Auto-hidden docks start cold: do not decode icons/backgrounds merely to
+    // discard them eight seconds later. Pinned docks and the first reveal use
+    // the same complete Refresh path as a later restore from idle.
+    private bool _resourcesSuspended = true;
     private string? _suspendedListId;
     private double _suspendedScrollOffset;
     private bool _restoreScrollPending;
@@ -66,6 +69,7 @@ public sealed class DockWindow : Window
     private readonly DockScrollBounce _scrollBounce = new();
     private readonly Dictionary<string, Task<ImageSource?>> _tileImages = new();
     private readonly HashSet<string> _usedImageKeys = new();
+    private readonly Dictionary<(ShortcutItem Item, int Size), string> _refreshImageKeys = new();
     private int _imageVersion;
     private double _iconScale = 1;
     private MenuFlyout? _itemMenu;
@@ -288,6 +292,7 @@ public sealed class DockWindow : Window
         ++_imageVersion;
         _iconScale = _root.XamlRoot?.RasterizationScale ?? Math.Max(1, NativeMethods.GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96d);
         _usedImageKeys.Clear();
+        _refreshImageKeys.Clear();
         _repeatedCycles = false;
         _cycleHeight = 0;
         _scrollValue = _scrollTarget = 0;
@@ -316,7 +321,7 @@ public sealed class DockWindow : Window
         _edge.Configure(settings.AutoHide, settings.HideDelayMs, settings.RevealDelayMs, settings.DockWidth,
             settings.RevealDurationMs, settings.HideDurationMs, settings.AnimationStyle, settings.DockFrameStyle,
             DockLayoutLogic.PreferredWidth(settings), settings.FloatingTopInset, settings.FloatingBottomInset,
-            settings.SuppressRevealWhenFullscreen, settings.KeepPinnedBelowWindows);
+            settings.SuppressRevealWhenFullscreen, settings.KeepPinnedBelowWindows, settings.MonitorDeviceName);
 
     private void ScheduleResourceRelease()
     {
@@ -354,10 +359,17 @@ public sealed class DockWindow : Window
         _expandButton.Opacity = 0; _expandButton.IsHitTestVisible = false;
         ++_imageVersion; ++_backgroundVersion;
         _itemMenu?.Hide(); _itemMenu = null;
+        // Menus are rebuilt on reveal. Their native XAML controls and shortcut
+        // closures need not stay rooted while the sidebar is unloaded.
+        _listButton.Flyout = null;
+        _sortButton.Flyout = null;
         _repeatedCycles = false; _cycleHeight = 0;
         _scrollValue = _scrollTarget = 0;
         _items.Children.Clear(); _tileButtons.Clear(); _selectedVisualButton = null; _primaryCycle = null;
-        _tileImages.Clear(); _usedImageKeys.Clear();
+        _tileButtons.TrimExcess();
+        _tileImages.Clear(); _tileImages.TrimExcess();
+        _usedImageKeys.Clear(); _usedImageKeys.TrimExcess();
+        _refreshImageKeys.Clear(); _refreshImageKeys.TrimExcess();
         _backgroundImage.Source = null; _backgroundImage.Visibility = Visibility.Collapsed;
         _backgroundPath = null;
         SystemBackdrop = null; _ownedBackdrop = null; _backdropKey = null;
@@ -704,7 +716,7 @@ public sealed class DockWindow : Window
             button.BorderBrush = new SolidColorBrush(selected ? ColorHelper.FromArgb(255, 135, 176, 255) : Colors.Transparent);
             // Keep geometry stable when selection changes.
             button.BorderThickness = new Thickness(2);
-            AutomationProperties.SetItemStatus(button, selected ? (_quickMode ? "Ctrl 模式已选中" : "键盘已选中") : "");
+            AutomationProperties.SetItemStatus(button, selected ? (_quickMode ? "快捷模式已选中" : "键盘已选中") : "");
         }
     }
 
@@ -1067,8 +1079,15 @@ public sealed class DockWindow : Window
         {
             int version = _imageVersion;
             int size = Math.Clamp((int)Math.Ceiling(Math.Max(iconHeight, wide ? _tileColumnWidth - 8 : iconHeight) * _iconScale), 16, 512);
-            string key = string.Join('\u001f', item.Id, size.ToString(), AssetStamp(item.CustomIconPath), AssetStamp(item.IconPath), AssetStamp(item.TargetPath));
-            _usedImageKeys.Add(key);
+            // Continuous scrolling renders the same shortcut in three cycles.
+            // Read each asset's timestamp once per refresh/size, rather than
+            // repeat synchronous filesystem work for every visual copy.
+            if (!_refreshImageKeys.TryGetValue((item, size), out string? key))
+            {
+                key = string.Join('\u001f', item.Id, size.ToString(), AssetStamp(item.CustomIconPath), AssetStamp(item.IconPath), AssetStamp(item.TargetPath));
+                _refreshImageKeys[(item, size)] = key;
+                _usedImageKeys.Add(key);
+            }
             if (!_tileImages.TryGetValue(key, out var loading))
                 _tileImages[key] = loading = ShellIconService.LoadShortcutAsync(item, size);
             var source = await loading;

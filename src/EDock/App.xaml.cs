@@ -2,6 +2,8 @@ using EDock.Models;
 using EDock.Services;
 using Microsoft.UI.Xaml;
 using System.Runtime.InteropServices;
+using System.Net.Http.Headers;
+using System.Text.Json;
 
 namespace EDock;
 
@@ -14,6 +16,8 @@ public partial class App : Application
     private QuickModeController? _quickMode;
     private TrayIconService? _tray;
     private TaskbarAppearanceService? _taskbarAppearance;
+    private StartMenuAppearanceService? _startMenuAppearance;
+    private StartButtonAppearanceService? _startButtonAppearance;
     private IdleMemoryService? _idleMemory;
     private DockSide _quickTargetSide = DockSide.Left;
     private bool _quickDockSwitched;
@@ -39,6 +43,10 @@ public partial class App : Application
     public string? LastError { get; private set; }
     public string? TaskbarError { get; private set; }
     public event EventHandler? TaskbarStatusChanged;
+    public string StartMenuStatus { get; private set; } = "";
+    public event EventHandler? StartMenuStatusChanged;
+    public string StartButtonStatus { get; private set; } = "";
+    public event EventHandler? StartButtonStatusChanged;
     public bool IsIsolatedProfile => _profileDirectory is not null;
     public string ConfigurationDirectory => SettingsStoreDirectory;
     private bool _exiting;
@@ -88,6 +96,18 @@ public partial class App : Application
                 TaskbarError = _taskbarAppearance.LastError;
                 TaskbarStatusChanged?.Invoke(this, EventArgs.Empty);
             };
+            _startMenuAppearance = new StartMenuAppearanceService(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
+            _startMenuAppearance.StatusChanged += (_, _) =>
+            {
+                StartMenuStatus = _startMenuAppearance.StatusText;
+                StartMenuStatusChanged?.Invoke(this, EventArgs.Empty);
+            };
+            _startButtonAppearance = new StartButtonAppearanceService(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
+            _startButtonAppearance.StatusChanged += (_, _) =>
+            {
+                StartButtonStatus = _startButtonAppearance.StatusText;
+                StartButtonStatusChanged?.Invoke(this, EventArgs.Empty);
+            };
         }
         ApplySettings();
         _quickMode = new QuickModeController(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread(),
@@ -123,9 +143,9 @@ public partial class App : Application
         RefreshPointerKeyboardTarget();
         try
         {
-            _tray = new TrayIconService(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread(), () => ShowSettings(), ExitApplication);
-            _tray.TaskbarCreated += (_, _) => _taskbarAppearance?.Refresh();
-            _tray.AppearanceChanged += (_, _) => _taskbarAppearance?.Refresh();
+            _tray = new TrayIconService(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread(), () => ShowSettings(), ExitApplication, CheckForUpdates);
+            _tray.TaskbarCreated += (_, _) => { _taskbarAppearance?.Refresh(); _startMenuAppearance?.Refresh(); _startButtonAppearance?.Refresh(); };
+            _tray.AppearanceChanged += (_, _) => { _taskbarAppearance?.Refresh(); _startMenuAppearance?.Refresh(); _startButtonAppearance?.Refresh(); };
             _tray.InteractionChanged += (_, _) => NotifyIdleMemoryStateChanged();
         }
         catch (Exception ex) { ReportError($"无法创建 EDock 托盘图标：{ex.Message}"); }
@@ -238,6 +258,30 @@ public partial class App : Application
             TaskbarStatusChanged?.Invoke(this, EventArgs.Empty);
             if (requireTaskbar) throw;
         }
+        try
+        {
+            _startMenuAppearance?.Configure(Settings.StartMenuTransparencyEnabled, Settings.StartMenuOpacity);
+            StartMenuStatus = _startMenuAppearance?.StatusText ?? "";
+        }
+        catch (Exception ex)
+        {
+            StartMenuStatus = ex.Message;
+            StartMenuStatusChanged?.Invoke(this, EventArgs.Empty);
+            if (requireTaskbar) throw;
+        }
+        try
+        {
+            _startButtonAppearance?.Configure(Settings.StartButtonReplacementEnabled, Settings.StartButtonImagePath,
+                Settings.StartButtonIconSize, Settings.StartButtonHoverImagePath, Settings.StartButtonPressedImagePath,
+                Settings.StartButtonActivatedImagePath);
+            StartButtonStatus = _startButtonAppearance?.StatusText ?? "";
+        }
+        catch (Exception ex)
+        {
+            StartButtonStatus = ex.Message;
+            StartButtonStatusChanged?.Invoke(this, EventArgs.Empty);
+            if (requireTaskbar) throw;
+        }
         // Retire an active gesture before destroying or adding its windows.
         // The next Ctrl tap can bind and reveal the available target afresh.
         if ((_left is not null) != Settings.LeftEnabled || (_right is not null) != Settings.RightEnabled)
@@ -264,7 +308,7 @@ public partial class App : Application
         bool enabled = Settings.QuickModeEnabled && available;
         if (_quickMode is not null && (_quickMode.IsEnabled != enabled || _quickMode.Side != Settings.QuickModeSide))
             EndOrdinaryKeyboardSession();
-        _quickMode?.Configure(enabled, Settings.QuickModeSide);
+        _quickMode?.Configure(enabled, Settings.QuickModeSide, Settings.ShortcutBindings, Settings.QuickModeActivation);
         if (_quickMode?.LastError is { Length: > 0 } error) ReportError(error);
     }
 
@@ -424,6 +468,35 @@ public partial class App : Application
         _settingsWindow?.ShowError(message);
     }
 
+    private async void CheckForUpdates()
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("EDock", typeof(App).Assembly.GetName().Version?.ToString() ?? "0.0.0"));
+            using var stream = await client.GetStreamAsync("https://api.github.com/repos/yuexialiaoluan/EDock/releases?per_page=20");
+            using var document = await JsonDocument.ParseAsync(stream);
+            Version current = typeof(App).Assembly.GetName().Version ?? new Version(0, 0, 0);
+            JsonElement? stable = null, preview = null;
+            foreach (var release in document.RootElement.EnumerateArray())
+            {
+                if (!release.TryGetProperty("tag_name", out var tag)) continue;
+                string text = tag.GetString()?.TrimStart('v', 'V') ?? string.Empty;
+                if (!Version.TryParse(text.Split('-')[0], out var version)) continue;
+                bool isPreview = release.TryGetProperty("prerelease", out var pre) && pre.GetBoolean();
+                if (isPreview ? preview is null : stable is null) { if (isPreview) preview = release; else stable = release; }
+            }
+            string Describe(JsonElement? release) => release is { } value && value.TryGetProperty("tag_name", out var tag) ? tag.GetString() ?? "未知" : "无";
+            string stableText = Describe(stable), previewText = Describe(preview);
+            string message = $"当前版本：{current}\n最新正式版：{stableText}\n最新试用版：{previewText}";
+            JsonElement? target = stable;
+            if (target is { } chosen && chosen.TryGetProperty("html_url", out var url))
+                await Windows.System.Launcher.LaunchUriAsync(new Uri(url.GetString()!));
+            ReportError(message);
+        }
+        catch (Exception ex) { ReportError($"检查更新失败：{ex.Message}"); }
+    }
+
     public void ShowSettings(DockSide? side = null)
     {
         _idleMemory?.NotifyActivity();
@@ -452,6 +525,8 @@ public partial class App : Application
             EndOrdinaryKeyboardSession();
             _idleMemory?.Dispose();
             _taskbarAppearance?.Dispose();
+            _startMenuAppearance?.Dispose();
+            _startButtonAppearance?.Dispose();
             _tray?.Dispose();
             _quickMode?.Dispose();
             _left?.Shutdown();

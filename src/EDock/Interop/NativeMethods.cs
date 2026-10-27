@@ -64,6 +64,7 @@ internal static class NativeMethods
     internal delegate nint KeyboardHookProc(int code, nint message, nint data);
     internal delegate nint MouseHookProc(int code, nint message, nint data);
     internal delegate nint WindowSubclassProc(nint hwnd, uint message, nuint wParam, nint lParam, nuint subclassId, nuint referenceData);
+    internal delegate bool MonitorEnumProc(nint monitor, nint hdc, nint rect, nint data);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct LowLevelKeyboardData
@@ -124,6 +125,22 @@ internal static class NativeMethods
         public uint Flags;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal unsafe struct MonitorInfoEx
+    {
+        public MonitorInfo Info;
+        public fixed char DeviceName[32];
+    }
+
+    private unsafe struct MonitorLookup
+    {
+        public char* DeviceName;
+        public int Length;
+        public nint Found;
+    }
+
+    private static readonly MonitorEnumProc MonitorLookupCallback = MatchMonitor;
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetCursorPos(out Point point);
@@ -152,6 +169,68 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     internal static extern nint MonitorFromPoint(Point point, uint flags);
+
+    [DllImport("user32.dll", EntryPoint = "EnumDisplayMonitors")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumDisplayMonitors(nint hdc, nint clip, MonitorEnumProc callback, nint data);
+
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfoEx(nint monitor, ref MonitorInfoEx info);
+
+    internal static unsafe nint FindMonitor(string deviceName)
+    {
+        if (string.IsNullOrWhiteSpace(deviceName)) return 0;
+        // This is polled by both hidden docks. Pass a synchronous, stack-owned
+        // lookup through EnumDisplayMonitors instead of allocating a closure,
+        // delegate and device-name string on every placement check.
+        fixed (char* name = deviceName)
+        {
+            var lookup = new MonitorLookup { DeviceName = name, Length = deviceName.Length };
+            EnumDisplayMonitors(0, 0, MonitorLookupCallback, (nint)(&lookup));
+            return lookup.Found;
+        }
+    }
+
+    private static unsafe bool MatchMonitor(nint monitor, nint hdc, nint rect, nint data)
+    {
+        var lookup = (MonitorLookup*)data;
+        var info = new MonitorInfoEx { Info = new MonitorInfo { Size = (uint)sizeof(MonitorInfoEx) } };
+        if (GetMonitorInfoEx(monitor, ref info)
+            && DeviceNameSpan(info.DeviceName).Equals(new ReadOnlySpan<char>(lookup->DeviceName, lookup->Length), StringComparison.OrdinalIgnoreCase))
+        {
+            lookup->Found = monitor;
+            return false;
+        }
+        return true;
+    }
+
+    private static unsafe ReadOnlySpan<char> DeviceNameSpan(char* name)
+    {
+        var span = new ReadOnlySpan<char>(name, 32);
+        int length = span.IndexOf('\0');
+        return length < 0 ? span : span[..length];
+    }
+
+    internal static unsafe string GetMonitorDeviceName(nint monitor)
+    {
+        var info = new MonitorInfoEx { Info = new MonitorInfo { Size = (uint)sizeof(MonitorInfoEx) } };
+        return monitor != 0 && GetMonitorInfoEx(monitor, ref info) ? DeviceNameSpan(info.DeviceName).ToString() : string.Empty;
+    }
+
+    internal static unsafe string[] GetMonitorDeviceNames()
+    {
+        var names = new List<string>();
+        MonitorEnumProc callback = (monitor, _, _, _) =>
+        {
+            string name = GetMonitorDeviceName(monitor);
+            if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
+            return true;
+        };
+        EnumDisplayMonitors(0, 0, callback, 0);
+        GC.KeepAlive(callback);
+        return names.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 
     [DllImport("user32.dll")]
     internal static extern nint GetForegroundWindow();

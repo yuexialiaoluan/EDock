@@ -119,7 +119,11 @@ try {
             $framework = @($framework | Where-Object { $null -ne $_ })
             $dotnetLine = ($framework | ForEach-Object { "$($_.name) $($_.version) x64 或兼容补丁版本" }) -join '；'
             $dependencies = Get-Content -LiteralPath (Join-Path $publishPath 'EDock.deps.json') -Raw | ConvertFrom-Json
-            $sdk = @($dependencies.libraries.PSObject.Properties.Name | Where-Object { $_ -match '^Microsoft.WindowsAppSDK/' })
+            $sdk = @($dependencies.libraries.PSObject.Properties.Name | Where-Object { $_ -match '^Microsoft.WindowsAppSDK.Runtime/' })
+            if ($sdk.Count -eq 0) {
+                # Older source revisions used the aggregate package.
+                $sdk = @($dependencies.libraries.PSObject.Properties.Name | Where-Object { $_ -match '^Microsoft.WindowsAppSDK/' })
+            }
             if ($sdk.Count -ne 1) { throw 'Could not identify the Windows App Runtime dependency.' }
             $sdkVersion = ($sdk[0] -split '/', 2)[1]
             $sdkParts = $sdkVersion -split '\.'

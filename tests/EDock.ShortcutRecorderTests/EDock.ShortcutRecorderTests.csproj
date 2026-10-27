@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/EDock/Services/ShortcutKeyRecorder.cs" Link="ShortcutKeyRecorder.cs" />
+    <Compile Include="../../src/EDock/Models/ShortcutBindings.cs" Link="ShortcutBindings.cs" />
+  </ItemGroup>
+</Project>

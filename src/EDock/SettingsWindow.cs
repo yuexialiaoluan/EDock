@@ -1,4 +1,4 @@
-using EDock.Services;
+﻿using EDock.Services;
 using EDock.Models;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
@@ -10,6 +10,8 @@ using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
 using System.Globalization;
+using System.Security.Cryptography;
+using Windows.Graphics.Imaging;
 
 namespace EDock;
 
@@ -18,6 +20,7 @@ public sealed class SettingsWindow : Window
     private static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp" };
     private readonly Grid _root = new();
     private readonly Dictionary<string, StackPanel> _pages = new();
+    private readonly Dictionary<string, ScrollViewer> _pageScrolls = new();
     private readonly Grid _pageHost = new();
     private readonly ListView _navigation = new() { SelectionMode = ListViewSelectionMode.Single, IsItemClickEnabled = false };
     private readonly Grid _titleBar = new() { Height = 40, Padding = new Thickness(18, 0, 144, 0) };
@@ -36,12 +39,42 @@ public sealed class SettingsWindow : Window
     private readonly ToggleSwitch _removeDesktopShortcut;
     private readonly ToggleSwitch _quickMode;
     private readonly ComboBox _quickModeSide;
+    private sealed record ShortcutRow(Button Key, ToggleSwitch Enabled, StackPanel Container)
+    {
+        public ShortcutEditControls? Edit { get; set; }
+    }
+    private sealed record ShortcutEditControls(Border Panel, TextBlock Candidate, TextBlock Hint, Button Save);
+    private readonly Dictionary<DockShortcutAction, ShortcutRow> _shortcutRows = new();
+    private readonly StackPanel _shortcutEditorHost = new();
+    private DockShortcutAction? _editingShortcut;
+    private ShortcutBinding? _shortcutCandidate;
+    private ShortcutKeyRecorder? _shortcutRecorder;
+    private bool _refreshingShortcuts;
+    private readonly TextBlock _shortcutConflictHint = Help("");
     private readonly ToggleSwitch _taskbarTransparency;
     private readonly Slider _taskbarOpacity;
     private readonly ComboBox _taskbarMaterial;
     private readonly TextBlock _taskbarOpacityLabel = new();
     private readonly TextBlock _taskbarMaterialHelp = Help("");
     private readonly TextBlock _taskbarStatus = Help("");
+    private readonly ToggleSwitch _startMenuTransparency;
+    private readonly Slider _startMenuOpacity;
+    private readonly TextBlock _startMenuOpacityLabel = new();
+    private readonly TextBlock _startMenuStatus = Help("");
+    private readonly ToggleSwitch _startButtonReplacement;
+    private readonly Slider _startButtonSize;
+    private readonly TextBlock _startButtonSizeLabel = new();
+    private readonly TextBlock _startButtonStatus = Help("");
+    private readonly TextBlock[] _startButtonImageHints = { Help(""), Help(""), Help(""), Help("") };
+    private readonly TextBox[] _startButtonImagePaths = new TextBox[4];
+    private readonly Button[] _startButtonPickButtons = new Button[4];
+    private readonly string[] _startButtonImageValues = new string[4];
+    private readonly string[] _startButtonImageTexts = new string[4];
+    private readonly long[] _startButtonImageVersions = new long[4];
+    private readonly CancellationTokenSource?[] _startButtonImageCancellation = new CancellationTokenSource?[4];
+    private readonly Task?[] _startButtonImageTasks = new Task?[4];
+    private bool _startButtonEnabled;
+    private double _startButtonSizeValue;
     private readonly ToggleSwitch _showNames;
     private readonly NumberBox _width;
     private readonly NumberBox _iconSize;
@@ -58,8 +91,8 @@ public sealed class SettingsWindow : Window
     private readonly ComboBox _sideChoice;
     private readonly SettingsEditorDraft _draft;
     private bool _loadingOptions = true;
-    private readonly DispatcherQueueTimer _previewTimer;
-    private readonly DispatcherQueueTimer _persistTimer;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _previewTimer;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _persistTimer;
     private readonly AppWindow _appWindow;
     private readonly Dictionary<NumberBox, NumberBinding> _numbers = new();
     private readonly string[] _imageText = new string[3];
@@ -84,6 +117,8 @@ public sealed class SettingsWindow : Window
     private bool _taskbarEnabled;
     private double _taskbarOpacityValue;
     private string _taskbarMaterialValue;
+    private bool _startMenuEnabled;
+    private double _startMenuOpacityValue;
     private readonly SettingsWindowBackdrop _settingsBackdrop;
     private readonly List<Border> _sectionCards = new();
     private readonly List<Border> _textSurfaces = new();
@@ -135,7 +170,8 @@ public sealed class SettingsWindow : Window
     private readonly HashSet<Popup> _openPopups = new();
     internal nint QuickModeWindowHandle => _closed ? 0 : _quickModeWindowHandle;
     internal bool IsQuickModeBusy => _closed || _closePending || _modalInteractions > 0
-        || _openChoices.Count > 0 || _openFlyouts.Count > 0 || _openPopups.Count > 0;
+        || _openChoices.Count > 0 || _openFlyouts.Count > 0 || _openPopups.Count > 0
+        || _editingShortcut is not null;
 
     public SettingsWindow(DockSide? initialSide = null)
     {
@@ -150,6 +186,15 @@ public sealed class SettingsWindow : Window
         _taskbarEnabled = settings.TaskbarTransparencyEnabled;
         _taskbarOpacityValue = settings.TaskbarOpacity;
         _taskbarMaterialValue = settings.TaskbarMaterial;
+        _startMenuEnabled = settings.StartMenuTransparencyEnabled;
+        _startMenuOpacityValue = settings.StartMenuOpacity;
+        _startButtonEnabled = settings.StartButtonReplacementEnabled;
+        _startButtonSizeValue = settings.StartButtonIconSize;
+        _startButtonImageValues[0] = settings.StartButtonImagePath;
+        _startButtonImageValues[1] = settings.StartButtonHoverImagePath;
+        _startButtonImageValues[2] = settings.StartButtonPressedImagePath;
+        _startButtonImageValues[3] = settings.StartButtonActivatedImagePath;
+        Array.Copy(_startButtonImageValues, _startButtonImageTexts, _startButtonImageValues.Length);
         _settingsBackgroundValue = settings.SettingsBackgroundStyle;
         _settingsThemeValue = settings.SettingsTheme;
         _settingsOverlayThemeValue = settings.SettingsContentOverlayTheme;
@@ -196,7 +241,7 @@ public sealed class SettingsWindow : Window
         _backgroundSurfaces.Add(sidebar);
         sidebar.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         sidebar.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var categories = new[] { ("基本设置", "\uE713"), ("图标与布局", "\uE80A"), ("背景与外观", "\uE790"), ("附属功能", "\uEA86"), ("设置窗口", "\uE737") };
+        var categories = new[] { ("基本设置", "\uE713"), ("图标与布局", "\uE80A"), ("背景与外观", "\uE790"), ("快捷模式", "\uE765"), ("附属功能", "\uEA86"), ("设置窗口", "\uE737") };
         foreach (var (name, glyph) in categories)
         {
             var item = new ListViewItem { Tag = name, Padding = new Thickness(0), Margin = new Thickness(0, 2, 0, 2), CornerRadius = new CornerRadius(7), HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -213,9 +258,11 @@ public sealed class SettingsWindow : Window
             _textSurfaces.Add(navigationSurface); _navigationSurfaces.Add(navigationSurface);
             var page = new StackPanel { Spacing = 12, Padding = new Thickness(20, 0, 20, 20) };
             _pages.Add(name, page);
-            var scroll = new ScrollViewer { Content = page, Visibility = Visibility.Collapsed,
+            var scroll = new ScrollViewer { Content = page,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            _pageHost.Children.Add(scroll);
+            // Unvisited pages must not realize their control templates and native
+            // text-input resources merely because the settings window is open.
+            _pageScrolls.Add(name, scroll);
         }
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_navigation, "设置分类");
         sidebar.Children.Add(_navigation);
@@ -350,16 +397,84 @@ public sealed class SettingsWindow : Window
         App.Current.TaskbarStatusChanged += UpdateTaskbarStatus;
         UpdateTaskbarStatus(null, EventArgs.Empty);
 
+        var startMenu = AddSection("开始菜单", "调整 Windows 开始菜单的背景透明度，保留文字和应用图标的清晰度。");
+        _startMenuTransparency = Toggle("开始菜单背景透明", settings.StartMenuTransparencyEnabled);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_startMenuTransparency, "StartMenuTransparency");
+        startMenu.Children.Add(_startMenuTransparency);
+        startMenu.Children.Add(_startMenuOpacityLabel);
+        _startMenuOpacity = new Slider { Minimum = 0, Maximum = 100, StepFrequency = 1,
+            Value = (1 - settings.StartMenuOpacity) * 100, HorizontalAlignment = HorizontalAlignment.Stretch };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_startMenuOpacity, "StartMenuTransparencyAmount");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_startMenuOpacity, "开始菜单背景透明度");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_startMenuStatus, "StartMenuStatus");
+        startMenu.Children.Add(_startMenuOpacity);
+        startMenu.Children.Add(Help("100% 为完全透明，0% 为不透明。修改自动生效；关闭此功能或退出 EDock 时恢复原背景。默认关闭。"));
+        startMenu.Children.Add(_startMenuStatus);
+        _startMenuTransparency.IsEnabled = !App.Current.IsIsolatedProfile;
+        UpdateStartMenuControls();
+        App.Current.StartMenuStatusChanged += UpdateStartMenuStatus;
+        UpdateStartMenuStatus(null, EventArgs.Empty);
+
+        var startButton = AddSection("开始按钮", "用自己的图片替换任务栏上的 Windows 开始图标，保留原来的单击与右键操作。");
+        _startButtonReplacement = Toggle("替换开始按钮图标", _startButtonEnabled);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_startButtonReplacement, "StartButtonReplacement");
+        _startButtonReplacement.IsEnabled = !App.Current.IsIsolatedProfile;
+        startButton.Children.Add(_startButtonReplacement);
+        string[] imageLabels = { "普通图片", "悬停图片（可选）", "按下图片（可选）", "激活图片（打开开始菜单时，可选）" };
+        for (int i = 0; i < imageLabels.Length; i++)
+        {
+            int slot = i;
+            var path = _startButtonImagePaths[i] = new TextBox { Header = imageLabels[i], Text = _startButtonImageTexts[i],
+                PlaceholderText = i == 0 ? "选择图片，或粘贴本地图片路径" : "留空时使用普通图片", HorizontalAlignment = HorizontalAlignment.Stretch };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(path, "StartButtonImagePath" + i);
+            path.Loaded += (_, _) => ProtectTextMenus(path);
+            var pick = _startButtonPickButtons[i] = new Button { Content = "选择图片…", VerticalAlignment = VerticalAlignment.Bottom };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(pick, "StartButtonPickImage" + i);
+            pick.Click += async (_, _) => await PickStartButtonImageAsync(slot);
+            path.TextChanged += (_, _) => { if (!_loadingOptions && !_closed) _ = RequestStartButtonImageValidation(slot, path.Text); };
+            var row = new Grid { ColumnSpacing = 10 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.Children.Add(path); row.Children.Add(pick); Grid.SetColumn(pick, 1);
+            startButton.Children.Add(row); startButton.Children.Add(_startButtonImageHints[i]);
+            SetStartButtonImageHint(i, "");
+        }
+        startButton.Children.Add(_startButtonSizeLabel);
+        _startButtonSize = new Slider { Minimum = 8, Maximum = 64, StepFrequency = 1, Value = _startButtonSizeValue,
+            HorizontalAlignment = HorizontalAlignment.Stretch };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_startButtonSize, "StartButtonIconSize");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_startButtonSize, "开始按钮图标大小");
+        startButton.Children.Add(_startButtonSize);
+        var restoreStartButton = new Button { Content = "恢复系统图标" };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(restoreStartButton, "StartButtonRestore");
+        restoreStartButton.Click += (_, _) => { _startButtonReplacement.IsOn = false; StartButtonChanged(); };
+        restoreStartButton.IsEnabled = !App.Current.IsIsolatedProfile;
+        var resetStartButton = new Button { Content = "恢复本组默认" };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(resetStartButton, "StartButtonReset");
+        resetStartButton.Click += (_, _) => ResetStartButton();
+        resetStartButton.IsEnabled = !App.Current.IsIsolatedProfile;
+        var startButtonActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        startButtonActions.Children.Add(restoreStartButton); startButtonActions.Children.Add(resetStartButton);
+        startButton.Children.Add(startButtonActions);
+        startButton.Children.Add(Help("支持 PNG、JPG 和 GIF，可分别设置普通、悬停、按下和开始菜单打开时的图片；可选图片留空时使用普通图片。图片会保存到 EDock，原文件移动或删除后仍可使用。关闭功能或退出 EDock 会恢复系统图标，图片选择保留。默认关闭。"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_startButtonStatus, "StartButtonStatus");
+        startButton.Children.Add(_startButtonStatus);
+        UpdateStartButtonControls();
+        App.Current.StartButtonStatusChanged += UpdateStartButtonStatus;
+        UpdateStartButtonStatus(null, EventArgs.Empty);
+
         var desktop = AddSection("桌面快捷方式整理", "把桌面图标收进边栏，保持桌面整洁。此选项对左右边栏共同生效。");
         _removeDesktopShortcut = Toggle("桌面图标拖入后移除原快捷方式", settings.RemoveDesktopShortcutAfterImport);
         desktop.Children.Add(_removeDesktopShortcut);
         desktop.Children.Add(Help("仅处理从桌面拖入的 .lnk / .url 快捷方式：先保存快捷方式副本并保存边栏记录，再移除桌面原件。普通文件、文件夹和桌面以外的快捷方式不会移除。默认关闭。"));
 
-        var quick = AddSection("Ctrl 快捷模式", "鼠标移入边栏可使用快捷键；桌面前台时，固定边栏无需移入鼠标也能操作。开启此选项后，还可用 Ctrl 呼出并保持边栏。");
-        _quickMode = Toggle("启用 Ctrl 快捷模式", settings.QuickModeEnabled);
-        _quickModeSide = Choice("Ctrl 模式显示的边栏", new[] { "左侧边栏", "右侧边栏", "左右两侧边栏" }, settings.QuickModeSide switch { "Right" => 1, "Both" => 2, _ => 0 });
-        quick.Children.Add(_quickMode); quick.Children.Add(_quickModeSide);
-        quick.Children.Add(Help("W / S 上下选择，A / D 左右选择；长按 WASD 连续移动。Q / E 切换列表，F 展开或收回，G 固定或取消固定当前边栏，空格打开选中项目，Tab 切换左右已启用边栏，无需开启 Ctrl 快捷模式。普通模式下，鼠标移入已显示的边栏即可操作；桌面在前台时，固定边栏也接受鼠标移开后的按键。双侧固定默认操作左侧，之后沿用最近操作侧。按 Tab 后目标侧临时保持显示；移动鼠标、切换窗口或打开项目后结束临时保持。开启 Ctrl 模式后，在桌面或本设置窗口轻按 Ctrl 显示并保持所选边栏，再按退出；同样支持以上按键，也可用滚轮选择。首选侧关闭时改用另一已启用侧，两侧都关闭时暂停呼出。切换到其他应用会退出 Ctrl 模式；鼠标不在边栏时也暂停普通按键。文本编辑、桌面重命名、组合键、菜单、拖动或文件选择期间暂停桌面快捷键。Ctrl 呼出默认关闭。"));
+        _buildingPage = "快捷模式";
+        var quick = AddSection("快捷模式", "鼠标移入边栏可使用快捷键；桌面前台时，固定边栏无需移入鼠标也能操作。呼出动作也可以在下方统一自定义。");
+        _quickMode = Toggle("启用快捷模式", settings.QuickModeEnabled);
+        _quickModeSide = Choice("快捷模式显示的边栏", new[] { "左侧边栏", "右侧边栏", "左右两侧边栏" }, settings.QuickModeSide switch { "Right" => 1, "Both" => 2, _ => 0 });
+        quick.Children.Add(Pair(_quickMode, _quickModeSide));
+        quick.Children.Add(_shortcutEditorHost);
+        quick.Children.Add(Help("呼出显示并保持所选边栏，再按一次退出。可关闭单项快捷键；关闭后会保留原按键，重新启用即可恢复。录入期间暂停边栏快捷键。"));
         _quickMode.Toggled += (_, _) => UpdateQuickModeControls();
         UpdateQuickModeControls();
 
@@ -434,6 +549,7 @@ public sealed class SettingsWindow : Window
         _scope.SelectionChanged += (_, _) => ChangeScope();
         _sideChoice.SelectionChanged += (_, _) => ChangeScope();
         Closed += OnClosed;
+        Activated += OnSettingsActivated;
         var handle = _quickModeWindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var appWindow = _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(handle));
         appWindow.Closing += OnAppWindowClosing;
@@ -451,9 +567,9 @@ public sealed class SettingsWindow : Window
         else if (!string.IsNullOrEmpty(App.Current.LastError)) ShowError(App.Current.LastError);
     }
 
-    private void OnPreviewTimerTick(DispatcherQueueTimer sender, object args) => PreviewPendingChanges();
+    private void OnPreviewTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) => PreviewPendingChanges();
 
-    private void OnPersistTimerTick(DispatcherQueueTimer sender, object args) => PersistPendingChanges();
+    private void OnPersistTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) => PersistPendingChanges();
 
     private void OnActualThemeChanged(FrameworkElement sender, object args)
     {
@@ -462,11 +578,13 @@ public sealed class SettingsWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        EndShortcutEdit();
         _closed = true; _previewTimer.Stop(); _persistTimer.Stop();
         _previewTimer.Tick -= OnPreviewTimerTick;
         _persistTimer.Tick -= OnPersistTimerTick;
         _appWindow.Closing -= OnAppWindowClosing;
         Closed -= OnClosed;
+        Activated -= OnSettingsActivated;
         _root.ActualThemeChanged -= OnActualThemeChanged;
         foreach (var input in _menuInputs) input.ContextMenuOpening -= OnTextContextMenuOpening;
         foreach (var flyout in _guardedFlyouts)
@@ -482,9 +600,17 @@ public sealed class SettingsWindow : Window
         _menuInputs.Clear(); _guardedFlyouts.Clear(); _openFlyouts.Clear();
         _guardedPopups.Clear(); _openPopups.Clear(); _openChoices.Clear();
         App.Current.TaskbarStatusChanged -= UpdateTaskbarStatus;
+        App.Current.StartMenuStatusChanged -= UpdateStartMenuStatus;
+        App.Current.StartButtonStatusChanged -= UpdateStartButtonStatus;
+        foreach (var cancellation in _startButtonImageCancellation) { cancellation?.Cancel(); cancellation?.Dispose(); }
         foreach (var cancellation in _imageCancellation) { cancellation?.Cancel(); cancellation?.Dispose(); }
         _settingsImageCancellation?.Cancel(); _settingsImageCancellation?.Dispose();
         _settingsBackdrop.Dispose();
+    }
+
+    private void OnSettingsActivated(object sender, WindowActivatedEventArgs args)
+    {
+        if (args.WindowActivationState == WindowActivationState.Deactivated) EndShortcutEdit();
     }
 
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -551,10 +677,19 @@ public sealed class SettingsWindow : Window
 
     private void ShowCategory()
     {
-        if (_navigation.SelectedItem is not ListViewItem) return;
+        EndShortcutEdit();
+        if (_navigation.SelectedItem is not ListViewItem { Tag: string name }) return;
+        if (name == "快捷模式" && _shortcutEditorHost.Children.Count == 0)
+            AddShortcutEditor(_shortcutEditorHost);
+        // Only one page belongs to the visual tree. Other pages retain their
+        // draft values and scroll position without loading invisible templates.
+        var scroll = _pageScrolls[name];
+        if (!ReferenceEquals(scroll.Parent, _pageHost))
+        {
+            _pageHost.Children.Clear();
+            _pageHost.Children.Add(scroll);
+        }
         int index = _navigation.SelectedIndex;
-        for (int i = 0; i < _pageHost.Children.Count; i++)
-            ((FrameworkElement)_pageHost.Children[i]).Visibility = i == index ? Visibility.Visible : Visibility.Collapsed;
         for (int i = 0; i < _navigationSurfaces.Count; i++)
             _navigationSurfaces[i].BorderBrush = new SolidColorBrush(i == index
                 ? ColorHelper.FromArgb(95, 92, 135, 207) : Colors.Transparent);
@@ -658,6 +793,7 @@ public sealed class SettingsWindow : Window
                 if (pair.Value.Input is not null) pair.Value.Input.Text = text;
             }
             UpdateDelayControls(); UpdateBackgroundControls(); UpdateFrameControls(); UpdateShortcutControls();
+            RefreshShortcutRows();
             UpdateScopeStatus();
         }
         finally { _loadingOptions = false; }
@@ -844,6 +980,10 @@ public sealed class SettingsWindow : Window
         _taskbarTransparency.Toggled += (_, _) => TaskbarChanged();
         _taskbarOpacity.ValueChanged += (_, _) => TaskbarChanged();
         _taskbarMaterial.SelectionChanged += (_, _) => TaskbarChanged();
+        _startMenuTransparency.Toggled += (_, _) => StartMenuChanged();
+        _startMenuOpacity.ValueChanged += (_, _) => StartMenuChanged();
+        _startButtonReplacement.Toggled += (_, _) => StartButtonChanged();
+        _startButtonSize.ValueChanged += (_, _) => StartButtonChanged();
         _settingsBackground.SelectionChanged += (_, _) =>
         {
             UpdateSettingsBackgroundControls();
@@ -926,6 +1066,204 @@ public sealed class SettingsWindow : Window
         QueuePreview();
     }
 
+    private void AddShortcutEditor(StackPanel parent)
+    {
+        var section = new StackPanel { Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        var header = new Grid { ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(new TextBlock { Text = "快捷键自定义", FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+        var reset = new Button { Content = "恢复默认按键", FontSize = 12 };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(reset, "ShortcutResetAll");
+        reset.Click += (_, _) => ResetShortcutBindings();
+        Grid.SetColumn(reset, 1); header.Children.Add(reset); section.Children.Add(header);
+        section.Children.Add(Help("点击按键开始录入 → 按下新按键 → Enter 保存 / Esc 取消。也可点击保存、取消；保存后需再次点击才能修改。"));
+        foreach (var action in ShortcutBindingCatalog.Actions)
+        {
+            string label = ShortcutBindingCatalog.Label(action);
+            var container = new StackPanel { Spacing = 6 };
+            var row = new Grid { ColumnSpacing = 12, MinHeight = 38 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(52) });
+            row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center });
+            var key = new Button { HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 34,
+                FontFamily = new FontFamily("Segoe UI"), CornerRadius = new CornerRadius(6) };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(key, "修改" + label + "快捷键");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(key, "ShortcutKey_" + action);
+            ToolTipService.SetToolTip(key, "点击录入新的按键");
+            key.Click += (_, _) => BeginShortcutEdit(action);
+            Grid.SetColumn(key, 1); row.Children.Add(key);
+            var enabled = Toggle("启用" + label + "快捷键", true);
+            enabled.Header = null; enabled.OnContent = ""; enabled.OffContent = "";
+            enabled.MinWidth = 40; enabled.VerticalAlignment = VerticalAlignment.Center;
+            enabled.Toggled += (_, _) => SetShortcutEnabled(action, enabled.IsOn);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(enabled, "ShortcutEnabled_" + action);
+            Grid.SetColumn(enabled, 2); row.Children.Add(enabled); container.Children.Add(row);
+
+            section.Children.Add(container);
+            _shortcutRows[action] = new ShortcutRow(key, enabled, container);
+        }
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_shortcutConflictHint, "ShortcutStatus");
+        section.Children.Add(_shortcutConflictHint); parent.Children.Add(section);
+        RefreshShortcutRows();
+    }
+
+    private ShortcutEditControls CreateShortcutEditControls(DockShortcutAction action, ShortcutRow row)
+    {
+        // Recording controls are needed for one action at a time, not for every
+        // shortcut whenever settings opens. Release them again after recording.
+        var content = new StackPanel { Spacing = 8 };
+        var candidate = new TextBlock { FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(candidate, "ShortcutCandidate_" + action);
+        var hint = Help("");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(hint, "ShortcutHint_" + action);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var save = new Button { Content = "保存", IsEnabled = false };
+        var cancel = new Button { Content = "取消" };
+        var restore = new Button { Content = "使用默认" };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(save, "ShortcutSave_" + action);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(cancel, "ShortcutCancel_" + action);
+        save.Click += (_, _) => SaveShortcutEdit();
+        cancel.Click += (_, _) => EndShortcutEdit();
+        restore.Click += (_, _) => SetShortcutCandidate(ShortcutBindingCatalog.Default(action));
+        actions.Children.Add(save); actions.Children.Add(cancel); actions.Children.Add(restore);
+        content.Children.Add(candidate); content.Children.Add(hint); content.Children.Add(actions);
+        var panel = new Border { Child = content, Padding = new Thickness(14),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7),
+            BorderBrush = new SolidColorBrush(ColorHelper.FromArgb(150, 75, 140, 230)) };
+        var edit = new ShortcutEditControls(panel, candidate, hint, save);
+        row.Edit = edit;
+        row.Container.Children.Add(panel);
+        return edit;
+    }
+
+    private void RefreshShortcutRows()
+    {
+        _refreshingShortcuts = true;
+        try
+        {
+            foreach (var (action, row) in _shortcutRows)
+            {
+                var binding = _draft.ShortcutBindings[action];
+                row.Key.Content = ShortcutBindingCatalog.DisplayKey(binding);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(row.Key, ShortcutBindingCatalog.DisplayKey(binding));
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(row.Key,
+                    ShortcutBindingCatalog.Label(action) + "快捷键：" + ShortcutBindingCatalog.DisplayKey(binding));
+                row.Key.Opacity = binding.Enabled ? 1 : .5;
+                row.Enabled.IsOn = binding.Enabled;
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(row.Key,
+                    binding.Enabled ? "已启用，点击修改" : "已关闭，保留原按键；点击修改后启用");
+            }
+        }
+        finally { _refreshingShortcuts = false; }
+        var conflicts = ShortcutBindingCatalog.FindConflicts(_draft.ShortcutBindings);
+        _shortcutConflictHint.Text = conflicts.Count == 0 ? "修改保存后立即生效。" : "已有按键冲突：" + string.Join("；", conflicts);
+    }
+
+    private void BeginShortcutEdit(DockShortcutAction action)
+    {
+        if (_closed || _editingShortcut == action) return;
+        EndShortcutEdit();
+        _editingShortcut = action;
+        App.Current.ExitQuickMode();
+        var row = CreateShortcutEditControls(action, _shortcutRows[action]);
+        row.Candidate.Text = "请按下快捷键…";
+        row.Hint.Text = "当前：" + ShortcutBindingCatalog.DisplayKey(_draft.ShortcutBindings[action]) + "。Enter 保存 · Esc 取消";
+        row.Save.IsEnabled = false;
+        row.Panel.StartBringIntoView();
+        var recorder = new ShortcutKeyRecorder(DispatcherQueue, () => _quickModeWindowHandle,
+            binding => { if (_editingShortcut == action) SetShortcutCandidate(binding); },
+            save => { if (_editingShortcut == action) { if (save) SaveShortcutEdit(); else EndShortcutEdit(); } });
+        _shortcutRecorder = recorder;
+        if (!recorder.Start())
+        {
+            string error = recorder.LastError ?? "无法开始按键录入，请重试。";
+            EndShortcutEdit(); ShowError(error);
+        }
+    }
+
+    private void SetShortcutCandidate(ShortcutBinding binding)
+    {
+        if (_editingShortcut is not { } action) return;
+        _shortcutCandidate = ShortcutBindingCatalog.NormalizeBinding(binding);
+        _shortcutCandidate.Enabled = true;
+        var row = _shortcutRows[action].Edit!;
+        row.Candidate.Text = ShortcutBindingCatalog.DisplayKey(_shortcutCandidate);
+        string? conflict = ShortcutConflict(action, _shortcutCandidate);
+        row.Hint.Text = conflict ?? "Enter 保存 · Esc 取消。保存后立即生效。";
+        row.Save.IsEnabled = conflict is null;
+    }
+
+    private string? ShortcutConflict(DockShortcutAction action, ShortcutBinding candidate)
+    {
+        if (ShortcutBindingCatalog.VirtualKeyCode(candidate.Key) == 0) return "此按键暂不支持，请换一个按键。";
+        if (candidate.Key is "Enter" or "Escape") return "Enter 和 Esc 用于保存、取消，请选择其他按键。";
+        if (!candidate.Enabled) return null;
+        var conflicts = _draft.ShortcutBindings.Where(pair => pair.Key != action && pair.Value.Enabled
+            && ShortcutBindingCatalog.DisplayKey(pair.Value) == ShortcutBindingCatalog.DisplayKey(candidate))
+            .Select(pair => ShortcutBindingCatalog.Label(pair.Key)).ToArray();
+        return conflicts.Length == 0 ? null : "与「" + string.Join("、", conflicts) + "」冲突，请换一个按键或先关闭对应快捷键。";
+    }
+
+    private void SaveShortcutEdit()
+    {
+        if (_editingShortcut is not { } action || _shortcutCandidate is null) return;
+        string? conflict = ShortcutConflict(action, _shortcutCandidate);
+        if (conflict is not null) { _shortcutRows[action].Edit!.Hint.Text = conflict; return; }
+        var candidate = _shortcutCandidate.Copy();
+        EndShortcutEdit();
+        ApplyShortcutBinding(action, candidate);
+    }
+
+    private void EndShortcutEdit()
+    {
+        var action = _editingShortcut;
+        _editingShortcut = null; _shortcutCandidate = null;
+        _shortcutRecorder?.Dispose(); _shortcutRecorder = null;
+        if (action is { } edited)
+        {
+            var row = _shortcutRows[edited];
+            if (row.Edit is { } edit) row.Container.Children.Remove(edit.Panel);
+            row.Edit = null;
+            // The recording button must not stay armed for another Enter press.
+            _navigation.Focus(FocusState.Programmatic);
+        }
+    }
+
+    private void SetShortcutEnabled(DockShortcutAction action, bool enabled)
+    {
+        if (_loadingOptions || _refreshingShortcuts || _closed) return;
+        EndShortcutEdit();
+        var binding = _draft.ShortcutBindings[action].Copy(); binding.Enabled = enabled;
+        string? conflict = ShortcutConflict(action, binding);
+        if (enabled && conflict is not null)
+        {
+            RefreshShortcutRows(); _shortcutConflictHint.Text = conflict; return;
+        }
+        ApplyShortcutBinding(action, binding);
+    }
+
+    private void ApplyShortcutBinding(DockShortcutAction action, ShortcutBinding binding)
+    {
+        var previous = _draft.ShortcutBindings[action].Copy();
+        _draft.SetShortcutBinding(action, binding);
+        QueuePreview();
+        if (!PreviewPendingChanges()) _draft.SetShortcutBinding(action, previous);
+        RefreshShortcutRows();
+    }
+
+    private void ResetShortcutBindings()
+    {
+        EndShortcutEdit();
+        var previous = _draft.ShortcutBindings.ToDictionary(pair => pair.Key, pair => pair.Value.Copy());
+        foreach (var action in ShortcutBindingCatalog.Actions) _draft.SetShortcutBinding(action, ShortcutBindingCatalog.Default(action));
+        QueuePreview();
+        if (!PreviewPendingChanges()) foreach (var pair in previous) _draft.SetShortcutBinding(pair.Key, pair.Value);
+        RefreshShortcutRows();
+    }
+
     private void TaskbarChanged()
     {
         if (_loadingOptions || _closed) return;
@@ -966,6 +1304,69 @@ public sealed class SettingsWindow : Window
     {
         _taskbarStatus.Text = App.Current.IsIsolatedProfile ? "测试实例不会修改系统任务栏。" : App.Current.TaskbarError ?? "";
         _taskbarStatus.Visibility = string.IsNullOrEmpty(_taskbarStatus.Text) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void StartMenuChanged()
+    {
+        if (_loadingOptions || _closed) return;
+        _startMenuEnabled = _startMenuTransparency.IsOn;
+        _startMenuOpacityValue = Math.Clamp(1 - _startMenuOpacity.Value / 100, 0, 1);
+        UpdateStartMenuControls();
+        QueuePreview();
+    }
+
+    private void UpdateStartMenuControls()
+    {
+        _startMenuOpacity.IsEnabled = _startMenuTransparency.IsOn && !App.Current.IsIsolatedProfile;
+        _startMenuOpacityLabel.Text = $"背景透明度：{_startMenuOpacity.Value:0}%";
+    }
+
+    private void UpdateStartMenuStatus(object? sender, EventArgs args)
+    {
+        _startMenuStatus.Text = App.Current.IsIsolatedProfile ? "测试实例不会修改系统开始菜单。" : App.Current.StartMenuStatus;
+        _startMenuStatus.Visibility = string.IsNullOrEmpty(_startMenuStatus.Text) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void StartButtonChanged()
+    {
+        if (_loadingOptions || _closed) return;
+        _startButtonEnabled = _startButtonReplacement.IsOn;
+        _startButtonSizeValue = Math.Clamp(_startButtonSize.Value, 8, 64);
+        UpdateStartButtonControls();
+        QueuePreview();
+    }
+
+    private void UpdateStartButtonControls()
+    {
+        _startButtonSize.IsEnabled = !App.Current.IsIsolatedProfile;
+        _startButtonSizeLabel.Text = $"图标大小：{_startButtonSize.Value:0}";
+    }
+
+    private void UpdateStartButtonStatus(object? sender, EventArgs args)
+    {
+        _startButtonStatus.Text = App.Current.IsIsolatedProfile ? "测试实例不会修改系统开始按钮。" : App.Current.StartButtonStatus;
+        _startButtonStatus.Visibility = string.IsNullOrEmpty(_startButtonStatus.Text) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ResetStartButton()
+    {
+        if (_closed || App.Current.IsIsolatedProfile) return;
+        _loadingOptions = true;
+        try
+        {
+            _startButtonEnabled = false; _startButtonSizeValue = 32;
+            _startButtonReplacement.IsOn = false; _startButtonSize.Value = 32;
+            for (int i = 0; i < _startButtonImageValues.Length; i++)
+            {
+                _startButtonImageCancellation[i]?.Cancel();
+                _startButtonImageVersions[i]++;
+                _startButtonImagePaths[i].Text = _startButtonImageTexts[i] = _startButtonImageValues[i] = "";
+                SetStartButtonImageHint(i, "");
+            }
+            UpdateStartButtonControls();
+        }
+        finally { _loadingOptions = false; }
+        QueuePreview();
     }
 
     private void StartupChanged()
@@ -1079,6 +1480,11 @@ public sealed class SettingsWindow : Window
             && current.OpenOnStartup == _startupValue;
         globalsMatch = globalsMatch && current.TaskbarTransparencyEnabled == _taskbarEnabled
             && current.TaskbarOpacity == _taskbarOpacityValue && current.TaskbarMaterial == _taskbarMaterialValue
+            && current.StartMenuTransparencyEnabled == _startMenuEnabled && current.StartMenuOpacity == _startMenuOpacityValue
+            && current.StartButtonReplacementEnabled == _startButtonEnabled && current.StartButtonIconSize == _startButtonSizeValue
+            && current.StartButtonImagePath == _startButtonImageValues[0] && current.StartButtonHoverImagePath == _startButtonImageValues[1]
+            && current.StartButtonPressedImagePath == _startButtonImageValues[2]
+            && current.StartButtonActivatedImagePath == _startButtonImageValues[3]
             && current.SettingsBackgroundStyle == _settingsBackgroundValue && current.SettingsBackgroundOpacity == _settingsOpacityValue
             && current.SettingsBackgroundImagePath == _settingsImageValue && current.SettingsBackgroundImageOverlayOpacity == _settingsOverlayValue
             && current.SettingsTheme == _settingsThemeValue && current.SettingsContentOverlayTheme == _settingsOverlayThemeValue;
@@ -1098,12 +1504,22 @@ public sealed class SettingsWindow : Window
             settings.TaskbarTransparencyEnabled = _taskbarEnabled;
             settings.TaskbarOpacity = _taskbarOpacityValue;
             settings.TaskbarMaterial = _taskbarMaterialValue;
+            settings.StartMenuTransparencyEnabled = _startMenuEnabled;
+            settings.StartMenuOpacity = _startMenuOpacityValue;
+            settings.StartButtonReplacementEnabled = _startButtonEnabled;
+            settings.StartButtonIconSize = _startButtonSizeValue;
+            settings.StartButtonImagePath = _startButtonImageValues[0];
+            settings.StartButtonHoverImagePath = _startButtonImageValues[1];
+            settings.StartButtonPressedImagePath = _startButtonImageValues[2];
+            settings.StartButtonActivatedImagePath = _startButtonImageValues[3];
             settings.SettingsBackgroundStyle = _settingsBackgroundValue;
             settings.SettingsBackgroundOpacity = _settingsOpacityValue;
             settings.SettingsBackgroundImagePath = _settingsImageValue;
             settings.SettingsBackgroundImageOverlayOpacity = _settingsOverlayValue;
             settings.SettingsTheme = _settingsThemeValue;
             settings.SettingsContentOverlayTheme = _settingsOverlayThemeValue;
+            settings.ShortcutBindings = _draft.ShortcutBindings.ToDictionary(pair => pair.Key, pair => pair.Value.Copy());
+            settings.QuickModeActivation = _draft.QuickModeActivation.Copy();
         }))
         {
             // A refused system appearance change must not prevent closing settings
@@ -1120,6 +1536,40 @@ public sealed class SettingsWindow : Window
                     _taskbarOpacity.Value = _taskbarOpacityValue * 100;
                     _taskbarMaterial.SelectedIndex = _taskbarMaterialValue switch { "Acrylic" => 1, "Blur" => 2, _ => 0 };
                     UpdateTaskbarControls();
+                }
+                finally { _loadingOptions = false; }
+            }
+            if (current.StartMenuTransparencyEnabled != _startMenuEnabled || current.StartMenuOpacity != _startMenuOpacityValue)
+            {
+                _startMenuEnabled = current.StartMenuTransparencyEnabled;
+                _startMenuOpacityValue = current.StartMenuOpacity;
+                _loadingOptions = true;
+                try
+                {
+                    _startMenuTransparency.IsOn = _startMenuEnabled;
+                    _startMenuOpacity.Value = (1 - _startMenuOpacityValue) * 100;
+                    UpdateStartMenuControls();
+                }
+                finally { _loadingOptions = false; }
+            }
+            if (current.StartButtonReplacementEnabled != _startButtonEnabled || current.StartButtonIconSize != _startButtonSizeValue
+                || current.StartButtonImagePath != _startButtonImageValues[0] || current.StartButtonHoverImagePath != _startButtonImageValues[1]
+                || current.StartButtonPressedImagePath != _startButtonImageValues[2] || current.StartButtonActivatedImagePath != _startButtonImageValues[3])
+            {
+                _startButtonEnabled = current.StartButtonReplacementEnabled;
+                _startButtonSizeValue = current.StartButtonIconSize;
+                _startButtonImageValues[0] = current.StartButtonImagePath;
+                _startButtonImageValues[1] = current.StartButtonHoverImagePath;
+                _startButtonImageValues[2] = current.StartButtonPressedImagePath;
+                _startButtonImageValues[3] = current.StartButtonActivatedImagePath;
+                _loadingOptions = true;
+                try
+                {
+                    _startButtonReplacement.IsOn = _startButtonEnabled;
+                    _startButtonSize.Value = _startButtonSizeValue;
+                    for (int i = 0; i < _startButtonImageValues.Length; i++)
+                        _startButtonImagePaths[i].Text = _startButtonImageTexts[i] = _startButtonImageValues[i];
+                    UpdateStartButtonControls();
                 }
                 finally { _loadingOptions = false; }
             }
@@ -1177,11 +1627,16 @@ public sealed class SettingsWindow : Window
                 if (_settingsImagePath.Text != _settingsImageText)
                     _ = RequestSettingsImageValidation(_settingsImagePath.Text, immediate: true);
                 long settingsVersion = _settingsImageVersion;
-                var pending = _imageValidationTasks.Append(_settingsImageTask).Where(task => task is { IsCompleted: false }).Cast<Task>().ToArray();
+                for (int i = 0; i < _startButtonImageValues.Length; i++)
+                    if (_startButtonImagePaths[i].Text != _startButtonImageTexts[i])
+                        _ = RequestStartButtonImageValidation(i, _startButtonImagePaths[i].Text, immediate: true);
+                var startButtonVersions = (long[])_startButtonImageVersions.Clone();
+                var pending = _imageValidationTasks.Append(_settingsImageTask).Concat(_startButtonImageTasks).Where(task => task is { IsCompleted: false }).Cast<Task>().ToArray();
                 if (pending.Length > 0) await Task.WhenAll(pending);
                 // Typing or choosing another image while awaiting replaces its task.
                 // Only flush once the latest request in every scope has settled.
-                if (!versions.SequenceEqual(_imageVersions) || settingsVersion != _settingsImageVersion) continue;
+                if (!versions.SequenceEqual(_imageVersions) || settingsVersion != _settingsImageVersion
+                    || !startButtonVersions.SequenceEqual(_startButtonImageVersions)) continue;
                 return FlushPendingChanges();
             }
             return true;
@@ -1191,6 +1646,144 @@ public sealed class SettingsWindow : Window
             if (!_closed) ShowError(ex.Message);
             return false;
         }
+    }
+
+    private async Task PickStartButtonImageAsync(int slot)
+    {
+        _startButtonPickButtons[slot].IsEnabled = false;
+        _modalInteractions++;
+        App.Current.ExitQuickMode();
+        try
+        {
+            var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary, ViewMode = PickerViewMode.Thumbnail };
+            foreach (string extension in new[] { ".png", ".jpg", ".jpeg", ".gif" }) picker.FileTypeFilter.Add(extension);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            var file = await picker.PickSingleFileAsync();
+            if (file is null || _closed) return;
+            _loadingOptions = true;
+            try { _startButtonImagePaths[slot].Text = file.Path; }
+            finally { _loadingOptions = false; }
+            await RequestStartButtonImageValidation(slot, file.Path, immediate: true);
+        }
+        catch (Exception ex) { if (!_closed) ShowError($"无法选择图片：{ex.Message}"); }
+        finally { _modalInteractions--; if (!_closed) _startButtonPickButtons[slot].IsEnabled = true; }
+    }
+
+    private Task RequestStartButtonImageValidation(int slot, string text, bool immediate = false)
+    {
+        _startButtonImageTexts[slot] = text;
+        _startButtonImageCancellation[slot]?.Cancel(); _startButtonImageCancellation[slot]?.Dispose();
+        var cancellation = _startButtonImageCancellation[slot] = new CancellationTokenSource();
+        long version = ++_startButtonImageVersions[slot];
+        SetStartButtonImageHint(slot, string.IsNullOrWhiteSpace(text) ? "" : "正在检查并保存图片…");
+        return _startButtonImageTasks[slot] = ValidateStartButtonImageAsync(slot, text, version, cancellation.Token, immediate);
+    }
+
+    private async Task ValidateStartButtonImageAsync(int slot, string text, long version, CancellationToken token, bool immediate)
+    {
+        bool Current() => !_closed && !token.IsCancellationRequested && version == _startButtonImageVersions[slot] && text == _startButtonImageTexts[slot];
+        try
+        {
+            if (!immediate) await Task.Delay(250, token);
+            if (!Current()) return;
+            string path = text.Trim().Trim('"');
+            if (path.Length == 0)
+            {
+                _startButtonImageValues[slot] = "";
+                SetStartButtonImageHint(slot, slot == 0 ? "请选择普通图片；选择前保留系统图标。" : "将使用普通图片。");
+                QueuePreview();
+                return;
+            }
+            path = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
+            string extension = Path.GetExtension(path).ToLowerInvariant();
+            if (extension is not (".png" or ".jpg" or ".jpeg" or ".gif"))
+                throw new InvalidDataException("请选择 PNG、JPG 或 GIF 图片。");
+            var info = new FileInfo(path);
+            if (!info.Exists) throw new FileNotFoundException("找不到图片，请检查路径。");
+            if (info.Length == 0 || info.Length > 16 * 1024 * 1024)
+                throw new InvalidDataException("请选择小于 16 MB 的有效图片。");
+            string stored = await ImportStartButtonImageAsync(path, extension, token);
+            if (!Current()) return;
+            _startButtonImageValues[slot] = stored;
+            _startButtonImageTexts[slot] = stored;
+            _loadingOptions = true;
+            try { _startButtonImagePaths[slot].Text = stored; }
+            finally { _loadingOptions = false; }
+            SetStartButtonImageHint(slot, "已保存图片副本，可移动或删除原文件。");
+            QueuePreview();
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (Current())
+            {
+                string message = ex switch
+                {
+                    InvalidDataException => ex.Message,
+                    FileNotFoundException or DirectoryNotFoundException => "找不到图片，请检查路径。",
+                    UnauthorizedAccessException => "没有权限读取图片或保存图片副本，请换一个可读取的文件。",
+                    IOException => "图片暂时无法读取或保存，请检查文件是否正在被其他程序占用。",
+                    ArgumentException or NotSupportedException => "图片路径无效，请选择本地图片文件。",
+                    _ => "图片无法解码，请换一张有效的 PNG、JPG 或 GIF 图片。"
+                };
+                SetStartButtonImageHint(slot, message + " 已保留上次有效的图片。");
+            }
+        }
+    }
+
+    private static async Task<string> ImportStartButtonImageAsync(string path, string extension, CancellationToken token)
+    {
+        string directory = Path.Combine(App.Current.ConfigurationDirectory, "StartButtonImages");
+        Directory.CreateDirectory(directory);
+        // Validate the exact bytes that are stored, so replacing the original
+        // during import cannot bypass decoding or size checks.
+        string temporary = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".tmp" + extension);
+        try
+        {
+            await using (var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true))
+            await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+            {
+                if (input.Length == 0 || input.Length > 16 * 1024 * 1024)
+                    throw new InvalidDataException("请选择小于 16 MB 的有效图片。");
+                await input.CopyToAsync(output, token);
+            }
+            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(temporary);
+            using (var stream = await file.OpenAsync(Windows.Storage.FileAccessMode.Read))
+            {
+                var decoder = await BitmapDecoder.CreateAsync(stream);
+                ulong pixels = (ulong)decoder.PixelWidth * decoder.PixelHeight;
+                if (decoder.PixelWidth == 0 || decoder.PixelHeight == 0 || decoder.PixelWidth > 2048 || decoder.PixelHeight > 2048
+                    || pixels > 4_194_304 || pixels * decoder.FrameCount > 16_777_216)
+                    throw new InvalidDataException("图片尺寸或动画过大，请选择较小的图标图片。");
+                // Decode only a thumbnail to reject damaged pixel data without
+                // allocating the full source image or playing GIF frames.
+                var frame = await decoder.GetFrameAsync(0);
+                var transform = new BitmapTransform { ScaledWidth = Math.Min(64, decoder.PixelWidth), ScaledHeight = Math.Min(64, decoder.PixelHeight) };
+                _ = await frame.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, transform,
+                    ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
+            }
+            token.ThrowIfCancellationRequested();
+            byte[] hash;
+            await using (var stream = File.OpenRead(temporary)) hash = await SHA256.HashDataAsync(stream, token);
+            string destination = Path.Combine(directory, Convert.ToHexString(hash).ToLowerInvariant() + extension);
+            try { File.Move(temporary, destination, false); }
+            catch (IOException) when (File.Exists(destination))
+            {
+                // Repair an existing cached copy if it was modified externally.
+                byte[] existing;
+                await using (var stream = File.OpenRead(destination)) existing = await SHA256.HashDataAsync(stream, token);
+                if (!existing.SequenceEqual(hash)) File.Move(temporary, destination, true);
+            }
+            return destination;
+        }
+        finally { try { if (File.Exists(temporary)) File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+    }
+
+    private void SetStartButtonImageHint(int slot, string text)
+    {
+        if (_closed) return;
+        _startButtonImageHints[slot].Text = text;
+        _startButtonImageHints[slot].Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private async Task PickImageAsync()

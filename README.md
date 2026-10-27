@@ -1,27 +1,16 @@
-# EDock 0.16.13
+﻿# EDock
 
 Windows 11 左右自动隐藏快捷启动栏。鼠标移到屏幕边缘展开，移开后收回。
 
-## 本次更新
-
-- 修复开启任务栏透明或材质后，旧的 XAML Diagnostics 连接未重新枚举任务栏背景的问题。
-- 更新任务栏组件、诊断连接和共享通道身份，让 Explorer 使用新的视觉树订阅；原有设置默认仍关闭，用户可在设置中启用。
-
 ## 下载与运行
 
-在 [0.16.13 发布页](https://github.com/yuexialiaoluan/EDock/releases/tag/v0.16.13) 下载，
-适用 Windows 11 x64，可选择安装版或免安装便携版。
+在 [0.16.19 发布页](https://github.com/yuexialiaoluan/EDock/releases/tag/v0.16.19) 下载，
+适用 Windows 11 x64，可选择安装版或免安装便携版。当前发布仅提供最新版本。
 
 | 版本 | 文件 | 大小 | 运行环境 |
 | --- | --- | --- | --- |
-| 安装版 | `EDock-0.16.13-setup-win-x64.exe` | 67.95 MiB | 已包含运行依赖，支持覆盖升级 |
-| 便携完整版 | `EDock-0.16.13-portable-win-x64.zip` | 98.69 MiB | 已包含运行依赖，解压运行 |
-| 便携精简版 | `EDock-0.16.13-portable-lite-win-x64.zip` | 15.48 MiB | 需已安装 .NET 8 x64 Runtime 和 Windows App Runtime 1.8 x64 |
-
-三个版本功能相同。便携精简版所需环境可从微软下载：
-[.NET 8 x64 Runtime](https://aka.ms/dotnet/8.0/dotnet-runtime-win-x64.exe)、
-[Windows App Runtime 1.8 x64](https://aka.ms/windowsappsdk/1.8/latest/windowsappruntimeinstall-x64.exe)。
-Windows 不一定自带这些环境；已安装其他主版本也不能直接替代。
+| 安装版 | `EDock-0.16.19-setup-win-x64.exe` | 53.17 MiB | 已包含运行依赖，支持覆盖升级 |
+| 便携版 | `EDock-0.16.19-portable-win-x64.zip` | 79.17 MiB | 已包含运行依赖，解压运行 |
 
 便携版完整解压后双击 **EDock.exe**。升级前先从托盘退出旧版；请保留全部附属文件，不要直接在压缩包里运行。
 发布页附各版本对应的 `SHA256.txt` 校验文件。
@@ -35,12 +24,14 @@ Windows 不一定自带这些环境；已安装其他主版本也不能直接替
 - 经典图标、横向图片、纯文本；调整图标大小、间距、列数和按钮位置。
 - 贴边直角、直角悬浮、圆角悬浮；主题、透明、亚克力和图片背景。
 - 独立的设置窗口外观；系统托盘菜单；可选的开机启动和系统任务栏材质。
+- 附属功能提供开始菜单背景透明开关与 0–100% 透明度调节，文字和图标保持清晰；关闭或退出 EDock 后恢复系统背景，默认关闭。
+- 附属功能可自定义系统开始按钮图片和大小，支持 PNG、JPG、GIF，分别设置普通、悬停、按下和开始菜单打开时的激活图片；导入图片保存副本，关闭或退出后恢复系统图标，默认关闭。
 - 隐藏待机时按需卸载图标、图片和材质资源，再次显示时恢复。
 
 ## 快捷键
 
 普通模式下鼠标移入已显示的边栏即可使用。桌面在前台时，固定边栏也接受这些按键，
-鼠标可以停在屏幕中央；无需开启 Ctrl 模式。双侧固定默认操作左侧，之后沿用最近操作侧。
+鼠标可以停在屏幕中央；无需开启快捷模式。双侧固定默认操作左侧，之后沿用最近操作侧。
 
 | 按键 | 操作 |
 | --- | --- |
@@ -54,17 +45,20 @@ Windows 不一定自带这些环境；已安装其他主版本也不能直接替
 | 空格 | 打开选中的项目 |
 
 普通模式按 Tab 后目标侧临时保持显示；移动鼠标、切换窗口或打开项目后结束。
-Ctrl 快捷模式默认关闭，可在设置中开启：桌面或 EDock 设置窗口前台单按 Ctrl
+快捷模式默认关闭，可在设置中开启：桌面或 EDock 设置窗口前台单按 Ctrl
 呼出并保持边栏，再按退出。同样支持上述快捷键，也支持滚轮选择。
-文本编辑、组合键、菜单、拖动和文件选择期间会暂停相关快捷键。
-Ctrl 首选侧关闭时回退到另一已启用侧；两侧都关闭时暂停呼出，重新启用后恢复。
+设置的「快捷模式」页面可修改或关闭每个快捷键，呼出键也在同一列表中。
+点击按键开始录入，按 Enter 保存或 Esc 取消，也可点击保存、取消；保存后立即生效，需再次点击才继续修改。
+冲突会标明重复的动作并阻止保存；关闭单项保留原按键，可逐项或全部恢复默认。
+快捷键支持单键和组合键，录入、文本编辑、菜单、拖动和文件选择期间暂停边栏操作。
+首选侧关闭时回退到另一已启用侧；两侧都关闭时暂停呼出，重新启用后恢复。
 桌面重命名、菜单和拖动期间暂停桌面快捷键；鼠标移开边栏后，其他应用在前台时不响应。
 
 ## 数据与卸载
 
-配置：`%LOCALAPPDATA%\EDock\settings.json`；导入的独立快捷方式：同目录 `Shortcuts`。
+配置：`%LOCALAPPDATA%\EDock\settings.json`；导入的独立快捷方式：同目录 `Shortcuts`；开始按钮图片副本：同目录 `StartButtonImages`。安装版升级时会一起备份。
 导入 `.lnk` / `.url` 会保存副本，删除桌面原快捷方式后仍可启动应用；应用本体及
-自定义图片仍需保留。首次使用列表为空，开机启动、Ctrl 模式和任务栏材质默认关闭。
+自定义图片仍需保留。首次使用列表为空，开机启动、快捷模式和任务栏材质默认关闭。
 
 退出后可备份整个配置目录。升级沿用现有配置，旧 EdgeDock 配置会在需要时自动迁移。
 安装版可直接重新运行新版安装程序覆盖升级；升级前自动将现有配置完整备份到
@@ -83,16 +77,16 @@ Ctrl 首选侧关闭时回退到另一已启用侧；两侧都关闭时暂停呼
 ```
 
 输出位于 `publish/win-x64/EDock.exe`。首次构建需要联网还原 NuGet 依赖。
-精简版可发布到独立目录，避免混入完整版依赖：
-
-```powershell
-dotnet publish ./src/EDock/EDock.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained false -p:WindowsAppSDKSelfContained=false -o ./publish/lite-win-x64
-```
-
+从 0.16.19 起使用 Windows App SDK 1.8 的 WinUI、DWrite 独立组件，
+由官方构建流程生成所需依赖和清单，完整版本仍包含 .NET 与界面运行环境，用户无需额外安装。
+程序没有使用的 AI、机器学习和 Widgets 组件不再随包分发；保留启动预编译，未启用实验性裁剪。
+升级安装时只清理明确列出的旧组件文件，保留个人配置及可能仍被资源管理器加载的原生组件。
+更改依赖后请发布到新的空目录，避免把旧目录中遗留的文件打入发布包。
 源码附带当前原生任务栏组件和对应源码；如需修改原生组件，用 Zig 0.14.1 构建：
 
 ```powershell
 ./src/EDock/Native/build.ps1 -ZigPath 'C:\Tools\zig\zig.exe'
+./src/EDock/Native/build-start-menu.ps1 -ZigPath 'C:\Tools\zig\zig.exe'
 ./build.ps1 -Publish
 ```
 
@@ -104,7 +98,6 @@ dotnet publish ./src/EDock/EDock.csproj -c Release -p:Platform=x64 -r win-x64 --
 
 ```powershell
 ./packaging/package-portable.ps1 -PublishDirectory ./publish/win-x64 -OutputDirectory ./artifacts
-./packaging/package-portable.ps1 -PublishDirectory ./publish/lite-win-x64 -OutputDirectory ./artifacts -Lite
 ```
 
 安装包使用 [Inno Setup 6.7.3](https://jrsoftware.org/isinfo.php)，以完整版发布目录为输入：
@@ -113,7 +106,7 @@ dotnet publish ./src/EDock/EDock.csproj -c Release -p:Platform=x64 -r win-x64 --
 ./packaging/build-installer.ps1 -PublishDirectory ./publish/win-x64 -OutputDirectory ./artifacts -InnoSetupCompiler 'C:\Tools\Inno Setup 6\ISCC.exe'
 ```
 
-脚本从程序读取版本，使用 `-setup`、`-portable`、`-portable-lite` 命名，并附带第三方许可。
+脚本从程序读取版本，使用 `-setup`、`-portable` 命名，并附带第三方许可。
 安装包保持固定应用标识和默认安装位置；后续版本请保留这些值，以继续支持覆盖升级。
 
 ## 测试

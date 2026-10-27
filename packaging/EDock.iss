@@ -9,6 +9,10 @@
 #define AppVersion GetStringFileInfo(PublishDirectory + "\EDock.exe", "ProductVersion")
 #define NativeHelper "EDock.Taskbar.0.14.5.dll"
 #define NativeSHA256 "dda83cae80e3af91a21af47a087247a47c369585ff39236e49758b664b90be4d"
+#define StartMenuHelper "EDock.StartMenu.0.16.15.dll"
+#define StartMenuSHA256 "2748270c47fcf2c61e2f2e40e066d2186c52fc2c515cdc8bb30a33b44ac8fd5b"
+#define StartButtonHelper "EDock.StartButton.0.16.18.1.dll"
+#define StartButtonSHA256 "bcc3f35bd07f6b4912348d0b60664cd9a352dd99fb9a8c79f810cda2acd5cec8"
 #define UserProfilePath "{localappdata}\EDock"
 #define UserBackupPath "{localappdata}\EDock-backups"
 
@@ -61,6 +65,10 @@ Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Excludes: "Native\*"; Flags: 
 ; This immutable helper can remain loaded in Explorer after EDock exits.
 ; Reuse its existing verified bytes and never request Explorer or Windows restart.
 Source: "{#PublishDirectory}\Native\{#NativeHelper}"; DestDir: "{app}\Native"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "{#PublishDirectory}\Native\{#StartMenuHelper}"; DestDir: "{app}\Native"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "{#PublishDirectory}\Native\{#StartButtonHelper}"; DestDir: "{app}\Native"; Flags: onlyifdoesntexist uninsneveruninstall
+
+#include "retired-sdk-components.iss"
 
 [Icons]
 Name: "{group}\EDock"; Filename: "{app}\EDock.exe"; WorkingDir: "{app}"
@@ -233,17 +241,24 @@ begin
     IntToStr(BackupFileCount) + ' files, ' + IntToStr(BackupDirectoryCount) + ' directories.');
 end;
 
-function PrepareToInstall(var NeedsRestart: Boolean): String;
+procedure VerifyExistingHelper(const Name, ExpectedHash: String);
 var
   ExistingHelper: String;
 begin
+  ExistingHelper := ExpandConstant('{app}\Native\') + Name;
+  if FileExists(ExistingHelper) then
+    if CompareText(GetSHA256OfFile(ExistingHelper), ExpectedHash) <> 0 then
+      RaiseException('现有系统外观组件与本安装包不一致：' + Name + #13#10 +
+        '请保留个人配置，选择新的程序文件夹，或在下次正常登录 Windows 后重试。');
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
   Result := '';
   try
-    ExistingHelper := ExpandConstant('{app}\Native\{#NativeHelper}');
-    if FileExists(ExistingHelper) then
-      if CompareText(GetSHA256OfFile(ExistingHelper), '{#NativeSHA256}') <> 0 then
-        RaiseException('现有任务栏组件与本安装包不一致，不能安全覆盖。' + #13#10 +
-          '请保留个人配置，选择新的程序文件夹，或在下次正常登录 Windows 后重试。');
+    VerifyExistingHelper('{#NativeHelper}', '{#NativeSHA256}');
+    VerifyExistingHelper('{#StartMenuHelper}', '{#StartMenuSHA256}');
+    VerifyExistingHelper('{#StartButtonHelper}', '{#StartButtonSHA256}');
     BackupExistingProfile;
   except
     Result := '安装尚未开始：' + GetExceptionMessage + #13#10 +
@@ -260,16 +275,23 @@ begin
       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
 end;
 
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+procedure RemoveAppearanceHelper(const Name: String);
 var
   HelperPath: String;
 begin
+  HelperPath := ExpandConstant('{app}\Native\') + Name;
+  if FileExists(HelperPath) then
+    if not DeleteFile(HelperPath) then
+      Log('System appearance helper is still loaded by Windows; leaving this file in place: ' + HelperPath);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
   if CurUninstallStep = usPostUninstall then
   begin
-    HelperPath := ExpandConstant('{app}\Native\{#NativeHelper}');
-    if FileExists(HelperPath) then
-      if not DeleteFile(HelperPath) then
-        Log('Taskbar helper is still loaded by Windows; leaving this file in place: ' + HelperPath);
+    RemoveAppearanceHelper('{#NativeHelper}');
+    RemoveAppearanceHelper('{#StartMenuHelper}');
+    RemoveAppearanceHelper('{#StartButtonHelper}');
     RemoveDir(ExpandConstant('{app}\Native'));
     RemoveDir(ExpandConstant('{app}'));
   end;

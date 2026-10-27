@@ -9,13 +9,14 @@ namespace EDock.Services;
 public enum DockKeyboardAction { Previous, Next, PreviousList, NextList, ToggleExpanded, Launch, PreviousColumn, NextColumn, SwitchDock, TogglePinned }
 public readonly record struct DockKeyboardRequest(DockSide Side, DockKeyboardAction Action);
 
-/// <summary>Toggles quick mode on the desktop or the supplied companion window after a standalone Ctrl tap.</summary>
+/// <summary>Runs user-configured shortcuts on the desktop or the supplied companion window.</summary>
 public sealed class QuickModeController : IDisposable
 {
     private enum PendingAction { Enter, Leave, Previous, Next, PreviousList, NextList, ToggleExpanded, Launch, PreviousColumn, NextColumn, SwitchDock, PreviousRow, NextRow, TogglePinned }
     private readonly record struct PendingRequest(PendingAction Action, DockSide? PointerSide = null, int PointerGeneration = 0);
     private readonly record struct MovementSource(PendingRequest Request, int QuickGeneration);
-    private const int VkA = 0x41, VkD = 0x44, VkTab = 0x09;
+    private Dictionary<DockShortcutAction, ShortcutBinding> _bindings = ShortcutBindingCatalog.CreateDefaults();
+    private ShortcutBinding _activation = QuickModeActivation.Default();
     private static readonly uint GuiThreadInfoSize = (uint)Marshal.SizeOf<NativeMethods.GuiThreadInfo>();
     private readonly DispatcherQueue _dispatcher;
     private readonly DispatcherQueueTimer _timer;
@@ -31,6 +32,7 @@ public sealed class QuickModeController : IDisposable
     // Keep their held-input protection without treating them as an observed chord.
     private readonly HashSet<int> _initialKeys = new();
     private readonly HashSet<int> _controlKeys = new();
+    private readonly HashSet<int> _activationKeys = new();
     private readonly HashSet<int> _suppressedKeys = new();
     private readonly Dictionary<int, MovementSource> _movementSources = new();
     // Hooks run on the installing UI thread; retain delegates if native release fails.
@@ -50,6 +52,7 @@ public sealed class QuickModeController : IDisposable
     private int _quickGeneration;
     private int _wheelRemainder;
     private int _timerIntervalMs = 100;
+    private int _activationReleaseModifiers;
 
     public bool IsActive { get; private set; }
     public bool IsEnabled => _enabled;
@@ -84,23 +87,35 @@ public sealed class QuickModeController : IDisposable
         // Hovering an interactive dock temporarily needs only the keyboard hook.
     }
 
-    public void Configure(bool enabled, string side)
+    public void Configure(bool enabled, string side, IDictionary<DockShortcutAction, ShortcutBinding>? bindings = null, ShortcutBinding? activation = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         string normalizedSide = side?.ToUpperInvariant() switch
         {
             "RIGHT" => "Right", "BOTH" => "Both", _ => "Left"
         };
-        if (_enabled == enabled && Side == normalizedSide) return;
+        var normalizedBindings = bindings is null ? ShortcutBindingCatalog.CreateDefaults()
+            : bindings.ToDictionary(pair => pair.Key, pair => pair.Value.Copy());
+        ShortcutBindingCatalog.Normalize(normalizedBindings);
+        var normalizedActivation = QuickModeActivation.Normalize(activation ?? normalizedBindings[DockShortcutAction.ActivateQuickMode]);
+        normalizedBindings[DockShortcutAction.ActivateQuickMode] = normalizedActivation.Copy();
+        if (_enabled == enabled && Side == normalizedSide && SameBindings(_bindings, normalizedBindings)
+            && ShortcutBindingCatalog.SameBinding(_activation, normalizedActivation)) return;
         Exit();
         _pointerGeneration++;
         Side = normalizedSide;
+        _bindings = normalizedBindings;
+        _activation = normalizedActivation;
         LastError = null;
         ReadInitialKeys();
         _enabled = enabled && InstallHooks();
         UpdatePointerTarget();
         SynchronizeResources();
     }
+
+    private static bool SameBindings(IDictionary<DockShortcutAction, ShortcutBinding> left,
+        IDictionary<DockShortcutAction, ShortcutBinding> right) => left.Count == right.Count
+        && left.All(pair => right.TryGetValue(pair.Key, out var value) && ShortcutBindingCatalog.SameBinding(pair.Value, value));
 
     /// <summary>Refreshes the eligible ordinary command target, including a caller-managed keyboard session.</summary>
     public void RefreshPointerTarget()
@@ -111,11 +126,12 @@ public sealed class QuickModeController : IDisposable
         SynchronizeResources();
     }
 
-    /// <summary>Ends quick mode and cancels any in-progress Ctrl tap.</summary>
+    /// <summary>Ends quick mode and cancels any in-progress activation gesture.</summary>
     public void Exit()
     {
         _gestureActive = false;
         _tapCandidate = false;
+        _activationReleaseModifiers = 0;
         _wheelRemainder = 0;
         _pending.Clear();
         _pointerGeneration++;
@@ -140,7 +156,7 @@ public sealed class QuickModeController : IDisposable
         }
         catch (Exception ex)
         {
-            LastError = $"无法启用 Ctrl 快捷模式：{ex.Message}";
+            LastError = $"无法启用快捷模式：{ex.Message}";
             ReleaseHook(ref _mouseHandle, "滚轮");
             if (_pointerSide is null && _suppressedKeys.Count == 0) ReleaseHook(ref _keyboardHandle, "键盘");
             UpdateHookRoots();
@@ -220,6 +236,7 @@ public sealed class QuickModeController : IDisposable
         _pressedKeys.Clear();
         _initialKeys.Clear();
         _controlKeys.Clear();
+        _activationKeys.Clear();
         for (int key = 8; key < 255; key++)
         {
             if (IsControl(key) || !IsKeyPressed(key)) continue;
@@ -239,6 +256,14 @@ public sealed class QuickModeController : IDisposable
         if (IsKeyPressed(NativeMethods.VkLeftControl)) _controlKeys.Add(NativeMethods.VkLeftControl);
         if (IsKeyPressed(NativeMethods.VkRightControl)) _controlKeys.Add(NativeMethods.VkRightControl);
         if (_controlKeys.Count == 0 && IsKeyPressed(NativeMethods.VkControl)) _controlKeys.Add(NativeMethods.VkControl);
+        for (int key = 8; key < 255; key++)
+        {
+            if (!IsActivationKey(key) || !IsKeyPressed(key)) continue;
+            if (key == NativeMethods.VkControl && (IsKeyPressed(NativeMethods.VkLeftControl) || IsKeyPressed(NativeMethods.VkRightControl))) continue;
+            if (key == NativeMethods.VkShift && (IsKeyPressed(NativeMethods.VkLeftShift) || IsKeyPressed(NativeMethods.VkRightShift))) continue;
+            if (key == NativeMethods.VkMenu && (IsKeyPressed(NativeMethods.VkLeftMenu) || IsKeyPressed(NativeMethods.VkRightMenu))) continue;
+            _activationKeys.Add(key);
+        }
         _tapCandidate = false;
     }
 
@@ -261,6 +286,8 @@ public sealed class QuickModeController : IDisposable
             if (IsKeyPressed(NativeMethods.VkRightControl)) _controlKeys.Add(NativeMethods.VkRightControl);
             if (_controlKeys.Count == 0 && IsKeyPressed(NativeMethods.VkControl)) _controlKeys.Add(NativeMethods.VkControl);
         }
+        if (_activationKeys.RemoveWhere(key => !IsKeyPressed(key)) > 0) _tapCandidate = false;
+        if ((CurrentModifiers() & _activationReleaseModifiers) == 0) _activationReleaseModifiers = 0;
         if (!CanUseQuickMode())
         {
             _tapCandidate = false;
@@ -270,24 +297,30 @@ public sealed class QuickModeController : IDisposable
         SynchronizeResources();
     }
 
-    private void ObserveControl(int key, bool down)
+    private void ObserveActivation(int key, bool down)
     {
         if (down)
         {
-            if (!_controlKeys.Add(key)) return; // A repeated down cannot start another tap.
-            if (_controlKeys.Count > 1) { _tapCandidate = false; UpdateTimerCadence(); return; }
-            _tapCandidate = _enabled && !HasObservedKeys() && CanUseQuickMode();
+            if (!_activationKeys.Add(key)) return; // A repeated down cannot start another tap.
+            if (_activationKeys.Count > 1) { _tapCandidate = false; UpdateTimerCadence(); return; }
+            _tapCandidate = _enabled && _activation.Enabled && ActivationModifiersMatch()
+                && !HasActivationChordKeys() && !_isBusy() && IsAllowedForeground();
             if (!_tapCandidate && _gestureActive) CancelFromHook();
             UpdateTimerCadence();
             return;
         }
-        bool wasHeld = _controlKeys.Remove(key);
+        bool wasHeld = _activationKeys.Remove(key);
         if (!wasHeld) _tapCandidate = false;
-        if (_controlKeys.Count != 0) { UpdateTimerCadence(); return; }
-        bool toggle = _tapCandidate && _enabled && !HasObservedKeys() && CanUseQuickMode();
+        if (_activationKeys.Count != 0) { UpdateTimerCadence(); return; }
+        // Releasing a chord's modifiers before its main key is equally valid.
+        // The full chord was already verified on that main key's initial down.
+        bool toggle = _tapCandidate && _enabled && _activation.Enabled
+            && (CurrentModifiers() & ~(ModifierMask(_activation.Modifiers) | ActivationOwnModifier)) == 0
+            && !HasActivationChordKeys() && !_isBusy() && IsAllowedForeground();
         _tapCandidate = false;
         if (!toggle) { UpdateTimerCadence(); return; }
         _gestureActive = !_gestureActive;
+        _activationReleaseModifiers = ModifierMask(_activation.Modifiers);
         _quickGeneration++;
         _wheelRemainder = 0;
         Enqueue(_gestureActive ? PendingAction.Enter : PendingAction.Leave);
@@ -310,15 +343,22 @@ public sealed class QuickModeController : IDisposable
             if (UpdatePointerTarget()) ScheduleDrain();
             if (IsControl(key))
             {
+                if (down) _controlKeys.Add(key); else _controlKeys.Remove(key);
+            }
+            if (_activation.Enabled && IsActivationKey(key) && (ActivationModifiersMatch() || _activationKeys.Contains(key)))
+            {
                 if (down) _pointerGeneration++;
-                ObserveControl(key, down);
+                ObserveActivation(key, down);
                 return NativeMethods.CallNextHookEx(_keyboardHandle, code, message, data);
             }
             bool previouslyPressed = _pressedKeys.Contains(key);
             _initialKeys.Remove(key);
             if (down) _pressedKeys.Add(key); else _pressedKeys.Remove(key);
-            // Any other key, including its release, makes Ctrl a chord rather than a tap.
-            _tapCandidate = false;
+            // A required modifier may be released before the activation's main
+            // key. Every other event invalidates that candidate permanently.
+            if (!(up && _activationKeys.Count != 0 && IsModifier(key)
+                && (KeyModifierMask(ModifierName(key)) & ModifierMask(_activation.Modifiers)) != 0))
+                _tapCandidate = false;
             UpdateTimerCadence();
             if (IsModifier(key) && down) _pointerGeneration++;
             if (up && _suppressedKeys.Remove(key))
@@ -335,13 +375,18 @@ public sealed class QuickModeController : IDisposable
             }
             if (_enabled && (_gestureActive || IsActive))
             {
-                if (!CanUseQuickMode() || HasControl())
+                if (!CanUseQuickMode())
                 {
                     CancelFromHook();
                     return NativeMethods.CallNextHookEx(_keyboardHandle, code, message, data);
                 }
-                if (!_gestureActive || !down || !TryGetAction(key, out var quickAction))
+                if (!_gestureActive || !down)
                     return NativeMethods.CallNextHookEx(_keyboardHandle, code, message, data);
+                if (!TryGetAction(key, out var quickAction))
+                {
+                    if (!IsModifier(key) && CurrentModifiers() != 0) CancelFromHook();
+                    return NativeMethods.CallNextHookEx(_keyboardHandle, code, message, data);
+                }
                 // A down that predated quick mode keeps its original repeat/up
                 // stream. Only a new press can become a quick-mode command.
                 if (previouslyPressed)
@@ -394,7 +439,7 @@ public sealed class QuickModeController : IDisposable
             }
             if (!_enabled || !_gestureActive || kind != NativeMethods.WmMouseWheel)
                 return NativeMethods.CallNextHookEx(_mouseHandle, code, message, data);
-            if (!CanUseQuickMode() || _controlKeys.Count != 0 || IsKeyPressed(NativeMethods.VkControl))
+            if (!CanUseQuickMode() || CurrentModifiers() != 0 || IsActivationHeld())
             {
                 CancelFromHook();
                 return NativeMethods.CallNextHookEx(_mouseHandle, code, message, data);
@@ -435,7 +480,7 @@ public sealed class QuickModeController : IDisposable
         if (request.PointerSide is DockSide side)
         {
             if (_gestureActive || IsActive || request.PointerGeneration != _pointerGeneration
-                || _pointerSide != side || !CanUsePointerCommands())
+                || _pointerSide != side || !CanUsePointerCommands() || !BindingStillMatches(key))
             {
                 _movementSources.Remove(key);
                 CancelPendingGroup(request.Action);
@@ -446,7 +491,7 @@ public sealed class QuickModeController : IDisposable
         else
         {
             if (!_enabled || !_gestureActive || source.QuickGeneration != _quickGeneration
-                || !CanUseQuickMode() || HasControl())
+                || !CanUseQuickMode() || !BindingStillMatches(key))
             {
                 _movementSources.Remove(key);
                 if (_gestureActive || IsActive) CancelFromHook();
@@ -456,38 +501,83 @@ public sealed class QuickModeController : IDisposable
         }
     }
 
-    private static bool TryGetAction(int key, out PendingAction action)
+    private bool TryGetAction(int key, out PendingAction action)
     {
-        action = key switch
+        action = PendingAction.Leave;
+        foreach (var pair in _bindings)
         {
-            NativeMethods.VkW => PendingAction.PreviousRow,
-            NativeMethods.VkS => PendingAction.NextRow,
-            VkA => PendingAction.PreviousColumn,
-            VkD => PendingAction.NextColumn,
-            VkTab => PendingAction.SwitchDock,
-            0x51 => PendingAction.PreviousList,
-            0x45 => PendingAction.NextList,
-            0x46 => PendingAction.ToggleExpanded,
-            0x47 => PendingAction.TogglePinned,
-            NativeMethods.VkSpace => PendingAction.Launch,
-            _ => PendingAction.Leave
-        };
-        return action != PendingAction.Leave;
+            if (pair.Key == DockShortcutAction.ActivateQuickMode) continue;
+            if (!pair.Value.Enabled || !MatchesKey(key, pair.Value)) continue;
+            action = pair.Key switch
+            {
+                DockShortcutAction.PreviousRow => PendingAction.PreviousRow,
+                DockShortcutAction.NextRow => PendingAction.NextRow,
+                DockShortcutAction.PreviousColumn => PendingAction.PreviousColumn,
+                DockShortcutAction.NextColumn => PendingAction.NextColumn,
+                DockShortcutAction.PreviousList => PendingAction.PreviousList,
+                DockShortcutAction.NextList => PendingAction.NextList,
+                DockShortcutAction.ToggleExpanded => PendingAction.ToggleExpanded,
+                DockShortcutAction.TogglePinned => PendingAction.TogglePinned,
+                DockShortcutAction.SwitchDock => PendingAction.SwitchDock,
+                DockShortcutAction.Launch => PendingAction.Launch,
+                _ => PendingAction.Leave
+            };
+            return action != PendingAction.Leave;
+        }
+        return false;
     }
 
-    private bool HasOppositeKeys(PendingAction action) => action switch
+    private bool MatchesKey(int key, ShortcutBinding binding)
     {
-        PendingAction.PreviousRow or PendingAction.NextRow => _pressedKeys.Contains(NativeMethods.VkW) && _pressedKeys.Contains(NativeMethods.VkS),
-        PendingAction.PreviousColumn or PendingAction.NextColumn => _pressedKeys.Contains(VkA) && _pressedKeys.Contains(VkD),
-        PendingAction.PreviousList or PendingAction.NextList => _pressedKeys.Contains(0x51) && _pressedKeys.Contains(0x45),
-        _ => false
+        return KeyMatches(key, binding.Key) && ModifierMask(binding.Modifiers) == (CurrentModifiers() & ~KeyModifierMask(binding.Key));
+    }
+
+    private static bool KeyMatches(int key, string bindingKey) => bindingKey switch
+    {
+        "Ctrl" => IsControl(key),
+        "Shift" => key is NativeMethods.VkShift or NativeMethods.VkLeftShift or NativeMethods.VkRightShift,
+        "Alt" => key is NativeMethods.VkMenu or NativeMethods.VkLeftMenu or NativeMethods.VkRightMenu,
+        "Win" => key is NativeMethods.VkLeftWindows or NativeMethods.VkRightWindows,
+        _ => KeyCode(bindingKey) == key
     };
+
+    private bool IsAnyPressed(int first, int second = 0, int third = 0) => IsHeld(first)
+        || second != 0 && IsHeld(second) || third != 0 && IsHeld(third);
+    private bool IsHeld(int key) => _pressedKeys.Contains(key) || IsKeyPressed(key);
+    private static int KeyCode(string key) => ShortcutBindingCatalog.VirtualKeyCode(key);
+
+    private bool BindingStillMatches(int key)
+    {
+        foreach (var pair in _bindings)
+            if (pair.Key != DockShortcutAction.ActivateQuickMode && pair.Value.Enabled && MatchesKey(key, pair.Value)) return true;
+        return false;
+    }
+
+    private bool HasOppositeKeys(PendingAction action)
+    {
+        var (first, second) = ActionGroup(action) switch
+        {
+            1 => (DockShortcutAction.PreviousRow, DockShortcutAction.NextRow),
+            2 => (DockShortcutAction.PreviousColumn, DockShortcutAction.NextColumn),
+            3 => (DockShortcutAction.PreviousList, DockShortcutAction.NextList),
+            _ => (DockShortcutAction.ActivateQuickMode, DockShortcutAction.ActivateQuickMode)
+        };
+        return first != second && BindingHeld(first) && BindingHeld(second);
+    }
+
+    private bool BindingHeld(DockShortcutAction action)
+    {
+        if (!_bindings.TryGetValue(action, out var binding) || !binding.Enabled) return false;
+        foreach (int key in _pressedKeys)
+            if (MatchesKey(key, binding)) return true;
+        return false;
+    }
 
     private void CancelPendingGroup(PendingAction conflict)
     {
         int group = ActionGroup(conflict);
-        if (group == 1) { _movementSources.Remove(NativeMethods.VkW); _movementSources.Remove(NativeMethods.VkS); }
-        else if (group == 2) { _movementSources.Remove(VkA); _movementSources.Remove(VkD); }
+        foreach (var source in _movementSources.Where(pair => ActionGroup(pair.Value.Request.Action) == group).Select(pair => pair.Key).ToArray())
+            _movementSources.Remove(source);
         // Remember a conflict when it happens, even if both keys are released
         // before the dispatcher runs. Preserve entry/exit and unrelated commands.
         int count = _pending.Count;
@@ -557,7 +647,7 @@ public sealed class QuickModeController : IDisposable
                         DockCommandRequested?.Invoke(this, new(side, ToDockAction(action)));
                     continue;
                 }
-                if (action != PendingAction.Leave && (!_enabled || !CanUseQuickMode() || HasControl()))
+                if (action != PendingAction.Leave && (!_enabled || !CanUseQuickMode()))
                 {
                     Exit();
                     break;
@@ -639,39 +729,94 @@ public sealed class QuickModeController : IDisposable
 
     private bool IsReleasedKey(int key) => !_suppressedKeys.Contains(key) && !IsKeyPressed(key);
 
-    private bool HasObservedKeys()
-    {
-        foreach (int key in _pressedKeys)
-            if (!_initialKeys.Contains(key)) return true;
-        return false;
-    }
-
     private bool CanUseQuickMode()
     {
-        return CanUseUnmodifiedInput() && IsAllowedForeground();
+        return !_isBusy() && ModifiersAllowed() && IsAllowedForeground();
     }
 
-    private bool HasControl() => _controlKeys.Count != 0 || IsKeyPressed(NativeMethods.VkControl);
+    private static int ModifierMask(string modifiers) => (modifiers.Contains("Ctrl", StringComparison.Ordinal) ? 1 : 0)
+        | (modifiers.Contains("Shift", StringComparison.Ordinal) ? 2 : 0)
+        | (modifiers.Contains("Alt", StringComparison.Ordinal) ? 4 : 0)
+        | (modifiers.Contains("Win", StringComparison.Ordinal) ? 8 : 0);
+
+    private int CurrentModifiers() => (HasControl() ? 1 : 0)
+        | (IsAnyPressed(NativeMethods.VkShift, NativeMethods.VkLeftShift, NativeMethods.VkRightShift) ? 2 : 0)
+        | (IsAnyPressed(NativeMethods.VkMenu, NativeMethods.VkLeftMenu, NativeMethods.VkRightMenu) ? 4 : 0)
+        | (IsAnyPressed(NativeMethods.VkLeftWindows, NativeMethods.VkRightWindows) ? 8 : 0);
+
+    private static int KeyModifierMask(string key) => key switch { "Ctrl" => 1, "Shift" => 2, "Alt" => 4, "Win" => 8, _ => 0 };
+    private static string ModifierName(int key) => IsControl(key) ? "Ctrl"
+        : key is NativeMethods.VkShift or NativeMethods.VkLeftShift or NativeMethods.VkRightShift ? "Shift"
+        : key is NativeMethods.VkMenu or NativeMethods.VkLeftMenu or NativeMethods.VkRightMenu ? "Alt"
+        : key is NativeMethods.VkLeftWindows or NativeMethods.VkRightWindows ? "Win" : string.Empty;
+    private int ActivationOwnModifier => KeyModifierMask(_activation.Key);
+
+    private bool ActivationModifiersMatch() => (CurrentModifiers() & ~ActivationOwnModifier) == ModifierMask(_activation.Modifiers);
+
+    private bool HasActivationChordKeys()
+    {
+        int required = ModifierMask(_activation.Modifiers);
+        foreach (int key in _pressedKeys)
+        {
+            if (_initialKeys.Contains(key) || IsActivationKey(key)) continue;
+            int bit = IsControl(key) ? 1 : key is NativeMethods.VkShift or NativeMethods.VkLeftShift or NativeMethods.VkRightShift ? 2
+                : key is NativeMethods.VkMenu or NativeMethods.VkLeftMenu or NativeMethods.VkRightMenu ? 4
+                : key is NativeMethods.VkLeftWindows or NativeMethods.VkRightWindows ? 8 : 0;
+            if (bit != 0 && (required & bit) != 0) continue;
+            return true;
+        }
+        return (CurrentModifiers() & ~(required | ActivationOwnModifier)) != 0;
+    }
+
+    private bool ModifiersAllowed()
+    {
+        int current = CurrentModifiers();
+        if (current == 0 || _activationReleaseModifiers != 0 && (current & ~_activationReleaseModifiers) == 0) return true;
+        if (_tapCandidate && _activation.Enabled && ActivationModifiersMatch()) return true;
+        foreach (var pair in _bindings)
+        {
+            if (pair.Key == DockShortcutAction.ActivateQuickMode || !pair.Value.Enabled) continue;
+            int required = ModifierMask(pair.Value.Modifiers) | KeyModifierMask(pair.Value.Key);
+            if (required != 0 && (current & ~required) == 0) return true;
+        }
+        // The configured activation may begin with its modifiers, before its main key.
+        int activationRequired = _activation.Enabled ? ModifierMask(_activation.Modifiers) : 0;
+        return activationRequired != 0 && (current & ~activationRequired) == 0;
+    }
+
+    private bool HasControl() => _controlKeys.Count != 0 || _pressedKeys.Contains(NativeMethods.VkControl)
+        || _pressedKeys.Contains(NativeMethods.VkLeftControl) || _pressedKeys.Contains(NativeMethods.VkRightControl)
+        || IsKeyPressed(NativeMethods.VkControl);
+
+    private bool IsActivationKey(int key) => QuickModeActivation.NormalizeKey(_activation.Key) switch
+    {
+        "Ctrl" => IsControl(key),
+        "Alt" => key is NativeMethods.VkMenu or NativeMethods.VkLeftMenu or NativeMethods.VkRightMenu,
+        "Shift" => key is NativeMethods.VkShift or NativeMethods.VkLeftShift or NativeMethods.VkRightShift,
+        "Win" => key is NativeMethods.VkLeftWindows or NativeMethods.VkRightWindows,
+        _ => KeyCode(_activation.Key) == key
+    };
+
+    private bool IsActivationHeld() => _activation.Enabled && (IsActivationKey(NativeMethods.VkControl) && _controlKeys.Count > 0
+        || QuickModeActivation.NormalizeKey(_activation.Key) switch
+        {
+            "Ctrl" => IsKeyPressed(NativeMethods.VkControl),
+            "Alt" => IsAnyPressed(NativeMethods.VkMenu, NativeMethods.VkLeftMenu, NativeMethods.VkRightMenu),
+            "Shift" => IsAnyPressed(NativeMethods.VkShift, NativeMethods.VkLeftShift, NativeMethods.VkRightShift),
+            "Win" => IsAnyPressed(NativeMethods.VkLeftWindows, NativeMethods.VkRightWindows),
+            _ => IsAnyPressed(KeyCode(_activation.Key))
+        });
 
     private bool CanUsePointerCommands()
     {
-        if (HasControl() || !CanUseUnmodifiedInput()) return false;
+        if (_isBusy() || !ModifiersAllowed()) return false;
         var gui = new NativeMethods.GuiThreadInfo { Size = GuiThreadInfoSize };
         return NativeMethods.GetGUIThreadInfo(0, ref gui) && gui.Capture == 0
             && (gui.Flags & NativeMethods.GuiInteractionModes) == 0;
     }
 
-    private bool CanUseUnmodifiedInput()
-    {
-        if (_isBusy()) return false;
-        foreach (int key in _pressedKeys)
-            if (IsModifier(key)) return false;
-        return !IsKeyPressed(NativeMethods.VkShift) && !IsKeyPressed(NativeMethods.VkMenu)
-            && !IsKeyPressed(NativeMethods.VkLeftWindows) && !IsKeyPressed(NativeMethods.VkRightWindows);
-    }
-
     private static bool IsControl(int key) => key is NativeMethods.VkControl or NativeMethods.VkLeftControl or NativeMethods.VkRightControl;
-    private static bool IsModifier(int key) => key is NativeMethods.VkShift or NativeMethods.VkLeftShift or NativeMethods.VkRightShift
+    private static bool IsModifier(int key) => IsControl(key) || key is NativeMethods.VkShift or NativeMethods.VkLeftShift or NativeMethods.VkRightShift
         or NativeMethods.VkMenu or NativeMethods.VkLeftMenu or NativeMethods.VkRightMenu
         or NativeMethods.VkLeftWindows or NativeMethods.VkRightWindows;
 

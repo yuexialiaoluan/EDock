@@ -10,10 +10,12 @@ public sealed class TrayIconService : IDisposable
     private const uint CallbackMessage = 0x8001;
     private const uint SettingsCommand = 1;
     private const uint ExitCommand = 2;
+    private const uint UpdateCommand = 3;
     private readonly DispatcherQueue _dispatcher;
     private readonly DispatcherQueueTimer _retryTimer;
     private readonly Action _showSettings;
     private readonly Action _exit;
+    private readonly Action _checkUpdates;
     private readonly WindowProcedure _windowProcedure;
     private readonly string _className = "EDock.Tray." + Guid.NewGuid().ToString("N");
     private readonly nint _instance;
@@ -32,11 +34,12 @@ public sealed class TrayIconService : IDisposable
     public bool IsMenuOpen { get; private set; }
     public event EventHandler? InteractionChanged;
 
-    public TrayIconService(DispatcherQueue dispatcher, Action showSettings, Action exit)
+    public TrayIconService(DispatcherQueue dispatcher, Action showSettings, Action exit, Action? checkUpdates = null)
     {
         _dispatcher = dispatcher;
         _showSettings = showSettings;
         _exit = exit;
+        _checkUpdates = checkUpdates ?? (() => { });
         _windowProcedure = OnWindowMessage;
         _instance = GetModuleHandle(null);
         _taskbarCreated = RegisterWindowMessage("TaskbarCreated");
@@ -123,6 +126,7 @@ public sealed class TrayIconService : IDisposable
             IsMenuOpen = true;
             InteractionChanged?.Invoke(this, EventArgs.Empty);
             AppendMenu(menu, 0, SettingsCommand, "设置…");
+            AppendMenu(menu, 0, UpdateCommand, "检查更新…");
             AppendMenu(menu, 0x0800, 0, null);
             AppendMenu(menu, 0, ExitCommand, "退出 EDock");
             SetMenuDefaultItem(menu, SettingsCommand, false);
@@ -143,12 +147,14 @@ public sealed class TrayIconService : IDisposable
 
     private void QueueCommand(uint command)
     {
-        if (command is not (SettingsCommand or ExitCommand)) return;
+        if (command is not (SettingsCommand or UpdateCommand or ExitCommand)) return;
         // Finish the native menu callback before opening XAML or destroying its owner.
         _dispatcher.TryEnqueue(() =>
         {
             if (_disposed) return;
-            if (command == SettingsCommand) _showSettings(); else _exit();
+            if (command == SettingsCommand) _showSettings();
+            else if (command == UpdateCommand) _checkUpdates();
+            else _exit();
         });
     }
 

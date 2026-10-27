@@ -999,8 +999,143 @@ for (int i = 0; i < 1000; i++) _ = DesktopInputContext.IsDesktopForeground();
 long desktopAllocationStart = GC.GetAllocatedBytesForCurrentThread();
 for (int i = 0; i < 10000; i++) _ = DesktopInputContext.IsDesktopForeground();
 Check(GC.GetAllocatedBytesForCurrentThread() == desktopAllocationStart, "desktop foreground eligibility adds no steady managed allocations");
+// User-defined keys must update the already-running controller, including when quick mode is disabled.
+foreach (bool quick in new[] { false, true })
+using (var f = New(quick))
+{
+    var bindings = ShortcutBindingCatalog.CreateDefaults();
+    bindings[DockShortcutAction.ToggleExpanded] = new() { Key = "I" };
+    f.Mode.Configure(quick, "Left", bindings);
+    if (quick) f.Tap(); else f.Hover(DockSide.Left);
+    Check(!f.Down(0x46) && !f.Up(0x46), "old F binding stops immediately after live rebind");
+    Check(f.Down(0x49) && f.Up(0x49), "custom I binding intercepts its real key pair"); f.Flush();
+    Check(quick ? f.Expansions == 1 : f.Commands.SequenceEqual(new[] { new DockKeyboardRequest(DockSide.Left, DockKeyboardAction.ToggleExpanded) }), "custom I executes without restart");
+    bindings[DockShortcutAction.ToggleExpanded].Enabled = false;
+    f.Mode.Configure(quick, "Left", bindings);
+    if (quick) f.Tap();
+    Check(!f.Down(0x49) && !f.Up(0x49), "disabling a single shortcut immediately passes I through");
+}
+foreach ((string key, int vk) in new[] { ("Number1", 0x31), ("Left", 0x25), ("NumPad5", 0x65), ("F24", 0x87), ("OemComma", 0xBC) })
+using (var f = New())
+{
+    var bindings = ShortcutBindingCatalog.CreateDefaults();
+    bindings[DockShortcutAction.TogglePinned] = new() { Key = key };
+    f.Mode.Configure(true, "Left", bindings); f.Tap();
+    Check(f.Down(vk) && f.Up(vk), "named number/navigation/numpad/function/punctuation key is supported"); f.Flush();
+    Check(f.Pins == 1, "named key executes configured action");
+}
+foreach (bool quick in new[] { false, true })
+foreach (int modifier in new[] { NativeMethods.VkLeftControl, NativeMethods.VkRightShift, NativeMethods.VkLeftMenu, NativeMethods.VkLeftWindows })
+using (var f = New(quick))
+{
+    string modifierName = modifier switch { NativeMethods.VkLeftControl => "Ctrl", NativeMethods.VkRightShift => "Shift", NativeMethods.VkLeftMenu => "Alt", _ => "Win" };
+    var bindings = ShortcutBindingCatalog.CreateDefaults();
+    bindings[DockShortcutAction.ToggleExpanded] = new() { Key = "I", Modifiers = modifierName };
+    f.Mode.Configure(quick, "Left", bindings);
+    if (quick) f.Tap(); else f.Hover(DockSide.Left);
+    Check(!f.Down(0x49) && !f.Up(0x49), "plain I cannot trigger a configured modifier chord");
+    Check(!f.Down(modifier), "combination modifier retains its native event"); f.Tick();
+    Check(f.Down(0x49), "configured modifier plus I is captured after reconciliation tick"); f.Flush();
+    Check(quick ? f.Expansions == 1 : f.Commands.Count == 1, "configured modifier chord works in quick and ordinary modes");
+    Check(f.Up(0x49) && !f.Up(modifier), "combination preserves matching release ownership"); f.Flush();
+    Check(quick ? f.Mode.IsActive : !f.Mode.IsActive, "combination modifier release cannot toggle quick mode accidentally");
+}
+using (var f = New())
+{
+    var bindings = ShortcutBindingCatalog.CreateDefaults();
+    bindings[DockShortcutAction.PreviousRow] = new() { Key = "I", Modifiers = "Ctrl+Shift" };
+    bindings[DockShortcutAction.NextRow] = new() { Key = "K", Modifiers = "Ctrl+Shift" };
+    f.Mode.Configure(true, "Left", bindings); f.Tap();
+    f.Down(NativeMethods.VkLeftControl); f.Down(NativeMethods.VkLeftShift);
+    Check(f.Down(0x49), "multi-modifier movement starts"); f.Flush();
+    for (int i = 0; i < 5; i++) Check(f.Down(0x49), "custom movement key repeats are captured");
+    f.Flush(); Check(f.VerticalMoves.Count == 6, "holding custom combo follows repeated navigation");
+    f.Down(0x4B); f.Down(0x49); f.Flush(); Check(f.VerticalMoves.Count == 6, "custom opposite keys cancel queued repeats");
+    f.Up(0x49); f.Up(0x4B); f.Release();
+    Check(f.Mode.IsActive, "custom movement combo leaves quick mode active");
+}
+foreach (string key in new[] { "Ctrl", "Shift", "Alt", "Win", "I" })
+using (var f = New())
+{
+    var activation = new ShortcutBinding { Key = key };
+    f.Mode.Configure(true, "Left", activation: activation);
+    int vk = key switch { "Ctrl" => NativeMethods.VkLeftControl, "Shift" => NativeMethods.VkRightShift,
+        "Alt" => NativeMethods.VkLeftMenu, "Win" => NativeMethods.VkRightWindows, _ => 0x49 };
+    f.Tap(vk); Check(f.Mode.IsActive, "standalone custom activation enters on release");
+    f.Tap(vk); Check(!f.Mode.IsActive, "standalone custom activation exits on release");
+    if (key != "Ctrl") { f.Tap(); Check(!f.Mode.IsActive, "old Ctrl activation stops immediately"); }
+    activation.Enabled = false; f.Mode.Configure(true, "Left", activation: activation);
+    f.Tap(vk); Check(!f.Mode.IsActive, "disabled activation cannot enter");
+}
+using (var f = New())
+{
+    var activation = new ShortcutBinding { Key = "I", Modifiers = "Ctrl+Shift" };
+    f.Mode.Configure(true, "Left", activation: activation);
+    f.Tap(0x49); Check(!f.Mode.IsActive, "custom activation requires all modifiers");
+    f.Down(NativeMethods.VkLeftControl); f.Tick(); f.Down(NativeMethods.VkLeftShift); f.Tick();
+    f.Down(0x49); f.Down(0x49); f.Up(0x49); f.Flush();
+    Check(f.Mode.IsActive, "custom activation combo toggles once on main key release");
+    f.Up(NativeMethods.VkLeftShift); f.Up(NativeMethods.VkLeftControl); f.Tick();
+    Check(f.Mode.IsActive, "releasing activation modifiers keeps mode active");
+    f.Down(NativeMethods.VkLeftControl); f.Down(NativeMethods.VkLeftShift); f.Down(0x49); f.Up(0x49); f.Release();
+    Check(!f.Mode.IsActive, "second custom activation combination exits");
+    NativeMethods.ForegroundClass = "Notepad";
+    f.Down(NativeMethods.VkLeftControl); f.Down(NativeMethods.VkLeftShift); f.Down(0x49); f.Up(0x49); f.Release();
+    Check(!f.Mode.IsActive, "custom activation never triggers over another application");
+}
+foreach (bool quick in new[] { false, true })
+foreach ((string key, int vk) in new[] { ("Ctrl", NativeMethods.VkRightControl), ("Shift", NativeMethods.VkLeftShift),
+    ("Alt", NativeMethods.VkRightMenu), ("Win", NativeMethods.VkLeftWindows) })
+using (var f = New(quick))
+{
+    var bindings = ShortcutBindingCatalog.CreateDefaults();
+    bindings[DockShortcutAction.ActivateQuickMode] = new() { Key = "I" };
+    bindings[DockShortcutAction.ToggleExpanded] = new() { Key = key };
+    f.Mode.Configure(quick, "Left", bindings);
+    if (quick) f.Tap(0x49); else f.Hover(DockSide.Left);
+    Check(f.Down(vk), "standalone modifier action captures either sided variant"); f.Flush();
+    Check(quick ? f.Expansions == 1 : f.Commands.Count == 1, "standalone modifier action executes");
+    f.Tick(); Check(f.Up(vk), "standalone modifier action retains release after reconciliation tick");
+    f.Tick(); Check(quick ? f.Mode.IsActive : !f.Mode.IsActive, "standalone action modifier does not toggle activation");
+}
+foreach (bool ctrlFirst in new[] { false, true })
+using (var f = New())
+{
+    f.Mode.Configure(true, "Left", activation: new() { Key = "I", Modifiers = "Ctrl+Shift" });
+    f.Down(NativeMethods.VkLeftControl); f.Down(NativeMethods.VkLeftShift); f.Down(0x49);
+    if (ctrlFirst) { f.Up(NativeMethods.VkLeftControl); f.Tick(); f.Up(NativeMethods.VkLeftShift); }
+    else { f.Up(NativeMethods.VkLeftShift); f.Tick(); f.Up(NativeMethods.VkLeftControl); }
+    f.Tick(); f.Up(0x49); f.Flush();
+    Check(f.Mode.IsActive, "activation chord accepts releasing modifiers before main key in either order");
+}
+using (var f = New())
+{
+    var bindings = ShortcutBindingCatalog.CreateDefaults();
+    bindings[DockShortcutAction.ToggleExpanded] = new() { Key = "I", Modifiers = "Ctrl" };
+    f.Mode.Configure(true, "Left", bindings); f.Tap();
+    f.Down(NativeMethods.VkLeftControl); Check(!f.Down(0x43), "unconfigured Ctrl+C still passes with a different configured Ctrl chord");
+    f.Release(); Check(!f.Mode.IsActive && f.Expansions == 0, "unconfigured modifier chord exits safely even with custom modifier bindings");
+}
+using (var f = New())
+{
+    var bindings = ShortcutBindingCatalog.CreateDefaults();
+    bindings[DockShortcutAction.ActivateQuickMode] = new() { Key = "I", Modifiers = "Ctrl" };
+    bindings[DockShortcutAction.ToggleExpanded] = new() { Key = "I" };
+    f.Mode.Configure(true, "Left", bindings);
+    f.Down(NativeMethods.VkLeftControl); f.Down(0x49); f.Up(0x49); f.Up(NativeMethods.VkLeftControl); f.Flush();
+    Check(f.Mode.IsActive, "activation combination can share main key with unmodified action");
+    f.Tap(0x49); Check(f.Expansions == 1 && f.Mode.IsActive, "unmodified action key is not stolen by different activation chord");
+}
+using (var f = New())
+{
+    var bindings = ShortcutBindingCatalog.CreateDefaults();
+    bindings[DockShortcutAction.ActivateQuickMode] = new() { Key = "I" };
+    f.Mode.Configure(true, "Left", bindings);
+    f.Tap(0x49); Check(f.Mode.IsActive, "activation from ordinary binding list applies without legacy argument");
+    f.Tap(0x49); f.Tap(); Check(!f.Mode.IsActive, "legacy Ctrl no longer enters after list activation change");
+}
 NativeMethods.Reset();
-Console.WriteLine($"PASS {checks} quick-mode, desktop and hover keyboard, wheel, lifecycle, companion-window and idle-allocation checks.");
+Console.WriteLine($"PASS {checks} quick-mode, custom shortcuts, desktop and hover keyboard, wheel, lifecycle, companion-window and idle-allocation checks.");
 
 sealed class Fixture : IDisposable
 {

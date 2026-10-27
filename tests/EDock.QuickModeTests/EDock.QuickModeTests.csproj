@@ -8,5 +8,6 @@
   <ItemGroup>
     <Compile Include="../../src/EDock/Services/QuickModeController.cs" Link="QuickModeController.cs" />
     <Compile Include="../../src/EDock/Services/DesktopInputContext.cs" Link="DesktopInputContext.cs" />
+    <Compile Include="../../src/EDock/Models/ShortcutBindings.cs" Link="ShortcutBindings.cs" />
   </ItemGroup>
 </Project>

@@ -3,6 +3,9 @@ namespace EDock.Models;
 /// <summary>Appearance and behavior shared by one dock or both docks.</summary>
 public class DockOptions
 {
+    // Empty means the primary display. Otherwise this is the stable Windows
+    // monitor device name (for example \\.\DISPLAY2).
+    public string MonitorDeviceName { get; set; } = string.Empty;
     public double DockWidth { get; set; } = 88;
     public bool AutoHide { get; set; } = true;
     public bool SuppressRevealWhenFullscreen { get; set; } = true;
@@ -31,6 +34,7 @@ public class DockOptions
 
     public DockOptions Copy() => new()
     {
+        MonitorDeviceName = MonitorDeviceName,
         DockWidth = DockWidth, AutoHide = AutoHide, HideDelayMs = HideDelayMs, RevealDelayMs = RevealDelayMs,
         SuppressRevealWhenFullscreen = SuppressRevealWhenFullscreen, KeepPinnedBelowWindows = KeepPinnedBelowWindows,
         RevealDurationMs = RevealDurationMs, HideDurationMs = HideDurationMs, AnimationStyle = AnimationStyle, LoopScrolling = LoopScrolling,
@@ -43,6 +47,7 @@ public class DockOptions
 
     public void CopyFrom(DockOptions source)
     {
+        MonitorDeviceName = source.MonitorDeviceName;
         DockWidth = source.DockWidth; AutoHide = source.AutoHide; HideDelayMs = source.HideDelayMs; RevealDelayMs = source.RevealDelayMs;
         SuppressRevealWhenFullscreen = source.SuppressRevealWhenFullscreen; KeepPinnedBelowWindows = source.KeepPinnedBelowWindows;
         RevealDurationMs = source.RevealDurationMs; HideDurationMs = source.HideDurationMs; AnimationStyle = source.AnimationStyle; LoopScrolling = source.LoopScrolling;
@@ -51,10 +56,13 @@ public class DockOptions
         FloatingTopInset = source.FloatingTopInset; FloatingBottomInset = source.FloatingBottomInset;
         BackgroundStyle = source.BackgroundStyle; BackgroundImagePath = source.BackgroundImagePath; BackgroundOpacity = source.BackgroundOpacity;
         BackgroundImageOverlayOpacity = source.BackgroundImageOverlayOpacity;
+        MonitorDeviceName = source.MonitorDeviceName;
     }
 
     internal void NormalizeOptions()
     {
+        MonitorDeviceName = (MonitorDeviceName ?? string.Empty).Trim();
+        if (MonitorDeviceName.Length > 128) MonitorDeviceName = string.Empty;
         DockWidth = double.IsFinite(DockWidth) ? Math.Clamp(DockWidth, 72, 320) : 88;
         if (HideDelayMs < 0 || HideDelayMs > 60_000) HideDelayMs = 650;
         if (RevealDelayMs < 0 || RevealDelayMs > 10_000) RevealDelayMs = 120;
@@ -76,5 +84,6 @@ public class DockOptions
         BackgroundImagePath = (BackgroundImagePath ?? string.Empty).Trim();
         BackgroundOpacity = double.IsFinite(BackgroundOpacity) ? Math.Clamp(BackgroundOpacity, 0, 1) : .82;
         BackgroundImageOverlayOpacity = double.IsFinite(BackgroundImageOverlayOpacity) ? Math.Clamp(BackgroundImageOverlayOpacity, 0, 1) : .35;
+        MonitorDeviceName = string.IsNullOrWhiteSpace(MonitorDeviceName) ? "Primary" : MonitorDeviceName.Trim();
     }
 }

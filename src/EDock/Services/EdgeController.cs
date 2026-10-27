@@ -40,6 +40,7 @@ public sealed class EdgeController : IDisposable
     private string _dockFrameStyle = "Edge";
     private double _floatingTopInsetDip = 8;
     private double _floatingBottomInsetDip = 8;
+    private string _monitorDeviceName = string.Empty;
     private int _cornerRadiusPixels;
     private bool _motionEnabled = true;
     private long _lastMotionCheck;
@@ -265,7 +266,8 @@ public sealed class EdgeController : IDisposable
     public void Configure(bool autoHide, int hideDelayMs, int revealDelayMs, double widthDip,
         int revealDurationMs = 250, int hideDurationMs = 250, string animationStyle = "Slide", string dockFrameStyle = "Edge", double? regularWidthDip = null,
         double floatingTopInsetDip = 8, double floatingBottomInsetDip = 8,
-        bool suppressRevealWhenFullscreen = true, bool keepPinnedBelowWindows = true)
+        bool suppressRevealWhenFullscreen = true, bool keepPinnedBelowWindows = true,
+        string monitorDeviceName = "")
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!double.IsFinite(widthDip) || widthDip <= 0)
@@ -273,6 +275,7 @@ public sealed class EdgeController : IDisposable
         _autoHide = autoHide;
         _suppressRevealWhenFullscreen = suppressRevealWhenFullscreen;
         _keepPinnedBelowWindows = keepPinnedBelowWindows;
+        _monitorDeviceName = (monitorDeviceName ?? string.Empty).Trim();
         _fullscreen = false;
         _lastFullscreenCheck = 0;
         _hideDelayMs = Math.Clamp(hideDelayMs, 100, 30_000);
@@ -355,9 +358,10 @@ public sealed class EdgeController : IDisposable
     public void RefreshPlacement()
     {
         if (_disposed) return;
-        // The primary screen contains the desktop origin. Always resolve it afresh
-        // so display changes cannot leave a dock following an adjacent monitor.
-        var monitor = NativeMethods.MonitorFromPoint(default, NativeMethods.MonitorDefaultToPrimary);
+        // Resolve the selected monitor on every placement pass. If the saved
+        // display is unplugged, fall back to the primary monitor until it returns.
+        var monitor = NativeMethods.FindMonitor(_monitorDeviceName);
+        if (monitor == 0) monitor = NativeMethods.MonitorFromPoint(default, NativeMethods.MonitorDefaultToPrimary);
         var info = new NativeMethods.MonitorInfo { Size = (uint)Marshal.SizeOf<NativeMethods.MonitorInfo>() };
         if (!NativeMethods.GetMonitorInfo(monitor, ref info))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot obtain the primary monitor bounds.");

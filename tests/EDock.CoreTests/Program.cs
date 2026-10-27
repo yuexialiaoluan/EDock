@@ -1985,6 +1985,7 @@ DesktopShortcutTransferTests.Register(suite);
 ManagedShortcutStorageTests.Register(suite);
 ConfigurationDirectoryMigrationTests.Register(suite, args.Length == 2 && args[0] == "--efs-parent" ? args[1] : null);
 WindowClassReaderTests.Register(suite);
+MonitorLookupTests.Register(suite);
 return suite.Finish();
 
 static string SortIds(IEnumerable<ShortcutItem> items, ShortcutSortKey key, bool descending = false) =>

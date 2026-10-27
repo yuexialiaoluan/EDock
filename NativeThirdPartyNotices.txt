@@ -1,6 +1,6 @@
-EDock native taskbar helper - third-party notices
+EDock native shell appearance helpers - third-party notices
 
-The native taskbar appearance helper is built using Zig 0.14.1 and includes statically linked runtime support from Zig, LLVM libc++, LLVM libc++abi, LLVM libunwind, and mingw-w64. The license texts distributed with that toolchain are reproduced below.
+The native taskbar, Start menu and Start button appearance helpers are built using Zig 0.14.1 and include statically linked runtime support from Zig, LLVM libc++, LLVM libc++abi, LLVM libunwind, and mingw-w64. The license texts distributed with that toolchain are reproduced below.
 Windows system libraries are supplied by Windows; no Windows system DLLs are bundled with EDock.
 
 ==============================================================================

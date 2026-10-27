@@ -21,7 +21,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Assets/EDock.ico</ApplicationIcon>
-    <Version>0.16.13</Version>
+    <Version>0.16.19</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Description>EDock · Windows 11 左右自动隐藏快捷启动栏</Description>
   </PropertyGroup>
@@ -35,8 +35,18 @@
   <ItemGroup>
     <Content Include="Assets\EDock.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Native\EDock.Taskbar.0.14.5.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Native\EDock.StartMenu.0.16.15.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Native\EDock.StartButton.0.16.18.1.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\NativeThirdPartyNotices.txt" Link="NativeThirdPartyNotices.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <!-- Windows App SDK 1.8 supports individual components. Keep the exact
+         WinUI/text versions supplied by 1.8.260921001 without pulling in the
+         unused AI, machine-learning and Widgets runtimes. Their dependencies
+         still generate the complete self-contained runtime and manifest. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="1.8.25122902" />
+    <!-- The optional framework-dependent/lite build still needs an explicit
+         shared Windows App Runtime dependency and bootstrap initializer. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="1.8.260921001" Condition="'$(WindowsAppSDKSelfContained)' != 'true'" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" />
   </ItemGroup>
   <!-- Unpackaged WinUI generates these after normal Content discovery. Include
